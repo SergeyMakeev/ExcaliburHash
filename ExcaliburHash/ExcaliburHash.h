@@ -4,6 +4,7 @@
 //#include <string>
 #include <type_traits>
 #include <utility>
+ #include <algorithm> // min/max
 
 #if !defined(CHHT_ALLOC) || !defined(CHHT_FREE)
     #if defined(_WIN32)
@@ -63,12 +64,13 @@ namespace Excalibur
 // generic type (without implementation)
 template <typename T> struct KeyInfo
 {
-    static inline T getEmpty() noexcept { static_assert(false, "Please provide a template specialization for type T"); }
-    static uint64_t hash(const T& key) noexcept { static_assert(false, "Please provide a template specialization for type T"); }
-    static bool isEqual(const T& lhs, const T& rhs) noexcept
+    static inline T getEmpty() noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
+    static uint64_t hash(const T& key) noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
+    static bool isEqual(const T& lhs, const T& rhs) noexcept; /*
     {
         static_assert(false, "Please provide a template specialization for type T");
     }
+    */
 };
 
 template <> struct KeyInfo<int>
@@ -178,6 +180,42 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (uintptr_t(cursor) & (alignment - 1)) == 0;
     }
 
+    template<typename TIterator>
+    struct IteratorHelper
+    {
+        static TIterator begin(const HashTable& ht) noexcept
+        {
+            if (ht.empty())
+            {
+                return end(ht);
+            }
+
+            Chunk* const CHHT_RESTRICT lastValidChunk = ht.lastChunk;
+            Chunk* CHHT_RESTRICT chunk = &ht.chunksStorage[0];
+            size_t firstValidIndex = 0;
+            for (; chunk <= lastValidChunk; chunk++)
+            {
+                TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
+                TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
+                for (; itemKey < endItemKey; itemKey++, firstValidIndex++)
+                {
+                    if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
+                    {
+                        size_t chunkIndex = shr(firstValidIndex, size_t(kDivideToNumElements));
+                        size_t chunkSubIndex = size_t(firstValidIndex & kNumElementsMod);
+                        return TIterator(&ht, chunkIndex, chunkSubIndex);
+                    }
+                }
+            }
+            // hash table is not empty, but there is no entry point found? this should never happen
+            CHHT_ASSERT(false);
+            return end(ht);
+        }
+
+        static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.chunkMod + 1, 0); }
+    };
+
+
   public:
     class IteratorBase
     {
@@ -238,37 +276,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return res;
         }
 
-        template <typename T> static T begin(const HashTable& ht) noexcept
-        {
-            if (ht.empty())
-            {
-                return end<T>(ht);
-            }
-
-            Chunk* const CHHT_RESTRICT lastValidChunk = ht.lastChunk;
-            Chunk* CHHT_RESTRICT chunk = &ht.chunksStorage[0];
-            size_t firstValidIndex = 0;
-            for (; chunk <= lastValidChunk; chunk++)
-            {
-                TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-                TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
-                for (; itemKey < endItemKey; itemKey++, firstValidIndex++)
-                {
-                    if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
-                    {
-                        size_t chunkIndex = shr(firstValidIndex, size_t(kDivideToNumElements));
-                        size_t chunkSubIndex = size_t(firstValidIndex & kNumElementsMod);
-                        return T(&ht, chunkIndex, chunkSubIndex);
-                    }
-                }
-            }
-            // hash table is not empty, but there is no entry point found? this should never happen
-            CHHT_ASSERT(false);
-            return end<T>(ht);
-        }
-
-        template <typename T> static T end(const HashTable& ht) noexcept { return T(&ht, ht.chunkMod + 1, 0); }
-
       private:
         const HashTable* ht;
         size_t chunkIndex;
@@ -287,8 +294,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
         }
 
-        inline const TKey& operator*() const noexcept { return *getKey(); }
-        inline const TKey* operator->() const noexcept { return getKey(); }
+        inline const TKey& operator*() const noexcept { return *IteratorBase::getKey(); }
+        inline const TKey* operator->() const noexcept { return IteratorBase::getKey(); }
     };
 
     class IteratorV : public IteratorBase
@@ -301,8 +308,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
         }
 
-        inline TValue& operator*() const noexcept { return *const_cast<TValue*>(getValue()); }
-        inline TValue* operator->() const noexcept { return const_cast<TValue*>(getValue()); }
+        inline TValue& operator*() const noexcept { return *const_cast<TValue*>(IteratorBase::getValue()); }
+        inline TValue* operator->() const noexcept { return const_cast<TValue*>(IteratorBase::getValue()); }
     };
 
     class IteratorKV : public IteratorBase
@@ -340,9 +347,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         void updateTmpKV() const noexcept
         {
             const reference<const TKey>& refKey = tmpKv.first;
-            const_cast<reference<const TKey>&>(refKey).set(getKey());
+            const_cast<reference<const TKey>&>(refKey).set(IteratorBase::getKey());
             const reference<TValue>& refVal = tmpKv.second;
-            const_cast<reference<TValue>&>(refVal).set(const_cast<TValue*>(getValue()));
+            const_cast<reference<TValue>&>(refVal).set(const_cast<TValue*>(IteratorBase::getValue()));
         }
 
       public:
@@ -354,8 +361,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
         }
 
-        inline const TKey& key() const noexcept { return *getKey(); }
-        inline TValue& value() const noexcept { return *const_cast<TValue*>(getValue()); }
+        inline const TKey& key() const noexcept { return *IteratorBase::getKey(); }
+        inline TValue& value() const noexcept { return *const_cast<TValue*>(IteratorBase::getValue()); }
 
         inline KeyValue& operator*() const noexcept
         {
@@ -377,9 +384,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         : chunksStorage(nullptr)
         , lastChunk(nullptr)
         , valuesStorage(nullptr)
-        , numBuckets(0)
-        , numElements(0)
         , chunkMod(0)
+        , numElements(0)
+        , numBuckets(0)
         , maxEmplaceStepsCount(0)
         , maxLookups(0)
     {
@@ -399,7 +406,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         size_t alignment = alignof(Chunk);
         size_t numBytesValues = 0;
-        if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
         {
             numBytesValues = numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
             alignment = std::max(alignment, alignof(ValueStorage));
@@ -418,7 +425,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         CHHT_ASSERT(chunksStorage);
         CHHT_ASSERT(isPointerAligned(chunksStorage, alignof(Chunk)));
 
-        if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
         {
             valuesStorage = (ValueStorage*)(reinterpret_cast<char*>(raw) + numBytesKeysAligned);
             CHHT_ASSERT(valuesStorage);
@@ -462,7 +469,15 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         // fast log2
 
         unsigned long idx;
+#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)        
         _BitScanReverse(&idx, unsigned long(numBuckets));
+#elif (defined(__GNUC__) && ((__GNUC__ >= 4) \
+   || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) \
+   || defined(__clang__) || defined(__MINGW32__) || defined(__CYGWIN__)  
+        idx = (32 - __builtin_clz(numBuckets));
+#else 
+#error "Unsupported platform. Please provide BitScanReverse implementation"
+#endif
 
         unsigned long log2 = idx;
         unsigned long desired = (log2 << 1) + shr(log2, 2ul); // log2(numBuckets) * 2.25
@@ -519,7 +534,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 {
                     if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
                     {
-                        if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+                        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                         {
                             TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[globalIndex]);
                             newHash.emplace(std::move(*itemKey), std::move(*itemValue));
@@ -569,7 +584,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
 
         TValue* CHHT_RESTRICT itemValue = nullptr;
-        if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
         {
             itemValue = reinterpret_cast<TValue*>(&valuesStorage[0]);
         }
@@ -581,7 +596,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             for (; itemKey < endItemKey; itemValue++, itemKey++)
             {
                 if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                              (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value))
+                              (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
                 {
                     if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
                     {
@@ -607,7 +622,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
         Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
         TValue* CHHT_RESTRICT itemValue = nullptr;
-        if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
         {
             itemValue = reinterpret_cast<TValue*>(&valuesStorage[0]);
         }
@@ -623,7 +638,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 {
                     // destroy value
                     if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                                  (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value))
+                                  (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
                     {
                         destruct(itemValue);
                     }
@@ -640,7 +655,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     template <typename TK, class... Args> inline std::pair<TValue*, bool> emplace(TK&& key, Args&&... args)
     {
-        static_assert(std::is_same<TKey, std::remove_const<std::remove_reference<TK>::type>::type>::value,
+        static_assert(std::is_same<TKey, typename std::remove_const<typename std::remove_reference<TK>::type>::type>::value,
                       "Expected unversal reference of TKey type");
 
         CHHT_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
@@ -683,7 +698,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                     numElements++;
                     maxEmplaceStepsCount = std::max(stepsCount, maxEmplaceStepsCount);
 
-                    if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                     {
                         TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[probe & numBucketsMod]);
                         construct<TValue>(itemValue, std::forward<Args>(args)...);
@@ -697,7 +712,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
                 if (TKeyInfo::isEqual(key, *itemKey))
                 {
-                    if constexpr (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value)
+                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                     {
                         TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[probe & numBucketsMod]);
                         return {{itemValue}, false};
@@ -727,7 +742,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         if (empty())
         {
-            return IteratorBase::end<IteratorKV>(*this);
+            return IteratorHelper<IteratorKV>::end(*this);
         }
 
         const uint64_t hashValue = TKeyInfo::hash(key);
@@ -738,7 +753,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         CHHT_ASSERT(chunkMod > 0);
         CHHT_ASSERT(numBuckets > 0 && (numBuckets & (numBuckets - 1)) == 0);
-        const size_t numBucketsMod = (numBuckets - 1);
+        //const size_t numBucketsMod = (numBuckets - 1);
 
         const size_t startProbe = addr.globalIndex;
         const size_t endProbe = startProbe + size_t(maxEmplaceStepsCount) + 1;
@@ -761,7 +776,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 CHHT_ASSERT(overflowBitmask == (ChunkBits_t(1) << ChunkBits_t(subIndex)));
                 if ((overflowBits & overflowBitmask) == 0)
                 {
-                    return IteratorBase::end<IteratorKV>(*this);
+                    return IteratorHelper<IteratorKV>::end(*this);
                 }
 
                 overflowBitmask = overflowBitmask << 1;
@@ -774,19 +789,19 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // hash table is 100% full? this should never happen
         CHHT_ASSERT(false);
-        return IteratorBase::end<IteratorKV>(*this);
+        return IteratorHelper<IteratorKV>::end(*this);
     }
 
     inline bool erase(const IteratorBase it)
     {
-        if (it == IteratorBase::end<IteratorBase>(*this))
+        if (it == IteratorHelper<IteratorBase>::end(*this))
         {
             return false;
         }
 
         numElements--;
         if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                      (!std::is_same<nullptr_t, std::remove_reference<TValue>::type>::value))
+                      (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
         {
             TValue* itemValue = const_cast<TValue*>(it.getValue());
             destruct(itemValue);
@@ -824,14 +839,14 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return *it.first;
     }
 
-    IteratorK begin() const { return IteratorBase::begin<IteratorK>(*this); }
-    IteratorK end() const { return IteratorBase::end<IteratorK>(*this); }
+    IteratorK begin() const { return IteratorHelper<IteratorK>::begin(*this); }
+    IteratorK end() const { return IteratorHelper<IteratorK>::end(*this); }
 
-    IteratorV vbegin() const { return IteratorBase::begin<IteratorV>(*this); }
-    IteratorV vend() const { return IteratorBase::end<IteratorV>(*this); }
+    IteratorV vbegin() const { return IteratorHelper<IteratorV>::begin(*this); }
+    IteratorV vend() const { return IteratorHelper<IteratorV>::end(*this); }
 
-    IteratorKV ibegin() const { return IteratorBase::begin<IteratorKV>(*this); }
-    IteratorKV iend() const { return IteratorBase::end<IteratorKV>(*this); }
+    IteratorKV ibegin() const { return IteratorHelper<IteratorKV>::begin(*this); }
+    IteratorKV iend() const { return IteratorHelper<IteratorKV>::end(*this); }
 
     struct Keys
     {
@@ -840,8 +855,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             : ht(_ht)
         {
         }
-        IteratorK begin() { return IteratorBase::begin<IteratorK>(*ht); }
-        IteratorK end() { return IteratorBase::end<IteratorK>(*ht); }
+        IteratorK begin() { return IteratorHelper<IteratorK>::begin(*ht); }
+        IteratorK end() { return IteratorHelper<IteratorK>::end(*ht); }
     };
     Keys keys() const { return Keys(this); }
 
@@ -852,8 +867,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             : ht(_ht)
         {
         }
-        IteratorV begin() { return IteratorBase::begin<IteratorV>(*ht); }
-        IteratorV end() { return IteratorBase::end<IteratorV>(*ht); }
+        IteratorV begin() { return IteratorHelper<IteratorV>::begin(*ht); }
+        IteratorV end() { return IteratorHelper<IteratorV>::end(*ht); }
     };
     Values values() const { return Values(this); }
 
@@ -864,8 +879,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             : ht(_ht)
         {
         }
-        IteratorKV begin() { return IteratorBase::begin<IteratorKV>(*ht); }
-        IteratorKV end() { return IteratorBase::end<IteratorKV>(*ht); }
+        IteratorKV begin() { return IteratorHelper<IteratorKV>::begin(*ht); }
+        IteratorKV end() { return IteratorHelper<IteratorKV>::end(*ht); }
     };
     Items items() const { return Items(this); }
 
