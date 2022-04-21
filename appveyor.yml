@@ -16,5 +16,5 @@ build_script:
 - cmake ..
 - cd ..
 - cmake --build .\build\ --config Debug
-- OpenCppCoverage.exe --export_type=cobertura:cobertura.xml --stop_on_assert --sources ExcaliburHashTest*.* --sources ExcaliburHash.h --excluded_sources *googletest* --modules *.exe -- .\build2019\Debug\ExcaliburHashTest.exe
+- OpenCppCoverage.exe --export_type=cobertura:cobertura.xml --stop_on_assert --sources ExcaliburHashTest*.* --sources ExcaliburHash.h --excluded_sources *googletest* --modules *.exe -- .\build\Debug\ExcaliburHashTest.exe
 - codecov -f cobertura.xml --root %APPVEYOR_BUILD_FOLDER% -t 6ff3ea6c-1bf4-47b4-b046-bd204afef71f
