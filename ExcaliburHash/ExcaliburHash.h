@@ -2,9 +2,9 @@
 
 #include <stdint.h>
 //#include <string>
+#include <algorithm> // min/max
 #include <type_traits>
 #include <utility>
- #include <algorithm> // min/max
 
 #if !defined(CHHT_ALLOC) || !defined(CHHT_FREE)
     #if defined(_WIN32)
@@ -64,7 +64,7 @@ namespace Excalibur
 // generic type (without implementation)
 template <typename T> struct KeyInfo
 {
-    static inline T getEmpty() noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
+    static inline T getEmpty() noexcept;         /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
     static uint64_t hash(const T& key) noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
     static bool isEqual(const T& lhs, const T& rhs) noexcept; /*
     {
@@ -180,8 +180,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (uintptr_t(cursor) & (alignment - 1)) == 0;
     }
 
-    template<typename TIterator>
-    struct IteratorHelper
+    template <typename TIterator> struct IteratorHelper
     {
         static TIterator begin(const HashTable& ht) noexcept
         {
@@ -214,7 +213,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.chunkMod + 1, 0); }
     };
-
 
   public:
     class IteratorBase
@@ -469,14 +467,13 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         // fast log2
 
         unsigned long idx;
-#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)        
+#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)
         _BitScanReverse(&idx, unsigned long(numBuckets));
-#elif (defined(__GNUC__) && ((__GNUC__ >= 4) \
-   || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) \
-   || defined(__clang__) || defined(__MINGW32__) || defined(__CYGWIN__)  
+#elif (defined(__GNUC__) && ((__GNUC__ >= 4) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) || defined(__clang__) ||                      \
+    defined(__MINGW32__) || defined(__CYGWIN__)
         idx = (32 - __builtin_clz(numBuckets));
-#else 
-#error "Unsupported platform. Please provide BitScanReverse implementation"
+#else
+    #error "Unsupported platform. Please provide BitScanReverse implementation"
 #endif
 
         unsigned long log2 = idx;
@@ -496,7 +493,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             destroy();
         }
 
-        CHHT_FREE(chunksStorage);
+        // it looks like calling `free(nullptr)` could be quite expensive for some memory allocators
+        if (chunksStorage)
+        {
+            CHHT_FREE(chunksStorage);
+        }
 
         //
         // TODO: DEBUG only?
@@ -753,7 +754,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         CHHT_ASSERT(chunkMod > 0);
         CHHT_ASSERT(numBuckets > 0 && (numBuckets & (numBuckets - 1)) == 0);
-        //const size_t numBucketsMod = (numBuckets - 1);
+        // const size_t numBucketsMod = (numBuckets - 1);
 
         const size_t startProbe = addr.globalIndex;
         const size_t endProbe = startProbe + size_t(maxEmplaceStepsCount) + 1;
