@@ -737,7 +737,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return {{nullptr}, false};
     }
 
-    inline IteratorKV find(const TKey& key) noexcept
+    inline const IteratorKV find(const TKey& key) const noexcept
     {
         CHHT_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
 
