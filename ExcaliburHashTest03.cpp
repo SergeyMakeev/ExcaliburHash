@@ -58,7 +58,6 @@ TEST(SmFlatHashMap, BadHashFunction)
     EXPECT_FALSE(e1);
 }
 
-
 namespace Excalibur
 {
 template <> struct KeyInfo<std::string>
@@ -68,7 +67,6 @@ template <> struct KeyInfo<std::string>
     static bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
 };
 } // namespace Excalibur
-
 
 TEST(SmFlatHashMap, ComplexStruct)
 {
@@ -109,4 +107,136 @@ TEST(SmFlatHashMap, ComplexStruct)
         // destroy non empty hash table (with non POD key/value type)
         ht[key] = "World";
     }
+}
+
+void ConstCorrectnessTest(const Excalibur::HashTable<int, int>& ht)
+{
+    // this test is more of an API const correctness test (this code is expected to compile without errors)
+    uint32_t size = ht.size();
+    EXPECT_EQ(size, uint32_t(1));
+
+    uint32_t capacity = ht.capacity();
+    EXPECT_GE(capacity, uint32_t(1));
+
+    bool isEmpty = ht.empty();
+    EXPECT_FALSE(isEmpty);
+
+    bool shouldBeTrue = ht.has(1);
+    EXPECT_TRUE(shouldBeTrue);
+
+    bool shouldBeFalse = ht.has(-1);
+    EXPECT_FALSE(shouldBeFalse);
+
+    uint64_t sum = 0;
+
+    auto it1 = ht.find(1);
+    ASSERT_NE(it1, ht.iend());
+    sum += it1->first;
+    sum += it1->second;
+
+    // this should not compile!
+    /*
+    int& v = it1->second;
+    v = 7;
+    */
+
+    auto it2 = ht.find(-1);
+    EXPECT_EQ(it2, ht.iend());
+
+    for (auto it3 = ht.begin(); it3 != ht.end(); ++it3)
+    {
+        sum += *it3;
+    }
+
+    for (auto it4 = ht.vbegin(); it4 != ht.vend(); ++it4)
+    {
+        sum += *it4;
+    }
+
+    for (auto it5 = ht.ibegin(); it5 != ht.iend(); ++it5)
+    {
+        sum += it5->first;
+        sum += it5->second;
+
+        // this should not compile!
+        /*
+        int& v = it5->second;
+        v = 7;
+        */
+    }
+
+    for (int k : ht)
+    {
+        sum += k;
+    }
+
+    for (int k : ht.keys())
+    {
+        sum += k;
+    }
+
+    for (int k : ht.values())
+    {
+        sum += k;
+    }
+
+    for (auto& kv : ht.items())
+    {
+        sum += kv.first;
+        sum += kv.second;
+
+        // this should not compile!
+        /*
+        int& v = kv.second;
+        v = 7;
+        */
+    }
+}
+
+void MutabilityTest(Excalibur::HashTable<int, int>& ht)
+{
+    // find() can be used to get non-const kv iterator
+    auto it1 = ht.find(1);
+    ASSERT_NE(it1, ht.iend());
+    int& v = it1->second;
+    EXPECT_EQ(v, 2);
+    v = 3;
+    EXPECT_EQ(v, 3);
+
+    // you can mutate values when iterate
+    for (auto it2 = ht.vbegin(); it2 != ht.vend(); ++it2)
+    {
+        int& val = *it2;
+        val++;
+    }
+
+    for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    {
+        int& val = it3->second;
+        val++;
+    }
+
+    for (int& k : ht.values())
+    {
+        k++;
+    }
+
+    for (auto& kv : ht.items())
+    {
+        int& val = kv.second;
+        val++;
+    }
+
+    auto it4 = ht.find(1);
+    ASSERT_NE(it4, ht.iend());
+    const int& testVal = it4->second;
+    EXPECT_EQ(testVal, 7);
+}
+
+TEST(SmFlatHashMap, ConstCorrectness)
+{
+    Excalibur::HashTable<int, int> ht;
+    ht.emplace(1, 2);
+    ConstCorrectnessTest(ht);
+    MutabilityTest(ht);
 }
