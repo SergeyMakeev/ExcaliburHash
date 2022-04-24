@@ -240,3 +240,53 @@ TEST(SmFlatHashMap, ConstCorrectness)
     ConstCorrectnessTest(ht);
     MutabilityTest(ht);
 }
+
+TEST(SmFlatHashMap, CopyTest)
+{
+    Excalibur::HashTable<int, int> ht1;
+    ht1.emplace(1, 2);
+    EXPECT_EQ(ht1.size(), uint32_t(1));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+
+    Excalibur::HashTable<int, int> ht2;
+    EXPECT_NE(ht2.size(), uint32_t(1));
+    EXPECT_EQ(ht2.find(1), ht2.iend());
+
+    ht2 = ht1;
+
+    EXPECT_EQ(ht2.size(), uint32_t(1));
+    EXPECT_NE(ht2.find(1), ht2.iend());
+
+    EXPECT_EQ(ht1.size(), uint32_t(1));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+
+    Excalibur::HashTable<int, int> ht3(ht1);
+
+    EXPECT_EQ(ht3.size(), uint32_t(1));
+    EXPECT_NE(ht3.find(1), ht3.iend());
+
+    EXPECT_EQ(ht1.size(), uint32_t(1));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+}
+
+TEST(SmFlatHashMap, MoveTest)
+{
+    Excalibur::HashTable<int, int> ht1;
+    ht1.emplace(1, 2);
+    EXPECT_EQ(ht1.size(), uint32_t(1));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+
+    Excalibur::HashTable<int, int> ht2;
+    EXPECT_NE(ht2.size(), uint32_t(1));
+    EXPECT_EQ(ht2.find(1), ht2.iend());
+
+    ht2 = std::move(ht1);
+
+    EXPECT_EQ(ht2.size(), uint32_t(1));
+    EXPECT_NE(ht2.find(1), ht2.iend());
+
+    Excalibur::HashTable<int, int> ht3(std::move(ht2));
+
+    EXPECT_EQ(ht3.size(), uint32_t(1));
+    EXPECT_NE(ht3.find(1), ht3.iend());
+}

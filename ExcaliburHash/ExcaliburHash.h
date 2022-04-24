@@ -214,37 +214,44 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.chunkMod + 1, 0); }
     };
 
+    template <typename THashTableSrc, typename THashTableDst> static inline void copyOrMoveTo(THashTableDst&& dst, THashTableSrc&& src)
+    {
+        if (src.empty())
+        {
+            return;
+        }
+
+        const uint32_t numBuckets = src.numBuckets;
+
+        Chunk* CHHT_RESTRICT chunk = &src.chunksStorage[0];
+        for (size_t globalIndex = 0; globalIndex < numBuckets;)
+        {
+            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
+            for (size_t subIndex = 0; subIndex < kNumElementsInChunk; subIndex++, globalIndex++, itemKey++)
+            {
+                if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
+                {
+                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+                    {
+                        TValue* itemValue = reinterpret_cast<TValue*>(&src.valuesStorage[globalIndex]);
+                        dst.emplace(std::move(*itemKey), std::move(*itemValue));
+                    }
+                    else
+                    {
+                        dst.emplace(std::move(*itemKey));
+                    }
+                }
+            }
+            chunk++;
+        }
+    }
+
     inline void rehash()
     {
         uint32_t newSize = capacity() * 2;
         HashTable newHash(newSize);
-
-        if (!empty())
-        {
-            Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
-            for (size_t globalIndex = 0; globalIndex < numBuckets;)
-            {
-                TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-                for (size_t subIndex = 0; subIndex < kNumElementsInChunk; subIndex++, globalIndex++, itemKey++)
-                {
-                    if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
-                    {
-                        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-                        {
-                            TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[globalIndex]);
-                            newHash.emplace(std::move(*itemKey), std::move(*itemValue));
-                        }
-                        else
-                        {
-                            newHash.emplace(std::move(*itemKey));
-                        }
-                    }
-                }
-                chunk++;
-            }
-        }
-
-        this->swap(newHash);
+        copyOrMoveTo(newHash, std::move(*this));
+        swap(newHash);
     }
 
     inline void rehash_if_need()
@@ -266,6 +273,100 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
             rehash();
         }
+    }
+
+    inline void create(uint32_t _numBuckets)
+    {
+        _numBuckets = (_numBuckets < kMinNumberOfBuckets) ? kMinNumberOfBuckets : _numBuckets;
+
+        // numBuckets has to be power-of-two
+        CHHT_ASSERT((_numBuckets & (_numBuckets - 1)) == 0);
+
+        size_t numChunks = shr(size_t(_numBuckets), size_t(kDivideToNumElements));
+
+        size_t numBytesKeys = numChunks * sizeof(Chunk);
+        size_t numBytesKeysAligned = align(numBytesKeys, alignof(ValueStorage));
+
+        size_t alignment = alignof(Chunk);
+        size_t numBytesValues = 0;
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+        {
+            numBytesValues = numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
+            alignment = std::max(alignment, alignof(ValueStorage));
+        }
+
+        alignment = std::max(alignment, size_t(16));
+        size_t numBytesTotal = numBytesKeysAligned + numBytesValues;
+        numBytesTotal = align(numBytesTotal, alignment);
+
+        CHHT_ASSERT((numBytesTotal % alignment) == 0);
+
+        void* raw = CHHT_ALLOC(numBytesTotal, alignment);
+        CHHT_ASSERT(raw);
+        chunksStorage = (Chunk*)raw;
+        CHHT_ASSERT(raw == chunksStorage);
+        CHHT_ASSERT(chunksStorage);
+        CHHT_ASSERT(isPointerAligned(chunksStorage, alignof(Chunk)));
+
+        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+        {
+            valuesStorage = (ValueStorage*)(reinterpret_cast<char*>(raw) + numBytesKeysAligned);
+            CHHT_ASSERT(valuesStorage);
+            CHHT_ASSERT(isPointerAligned(valuesStorage, alignof(ValueStorage)));
+        }
+        else
+        {
+            valuesStorage = nullptr;
+        }
+
+        CHHT_ASSERT(numChunks > 0);
+        chunkMod = uint32_t(numChunks - 1);
+        numBuckets = _numBuckets;
+        numElements = 0;
+
+        lastChunk = &chunksStorage[chunkMod];
+
+        // initialize keys
+        Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
+        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
+
+        for (; chunk <= lastValidChunk; chunk++)
+        {
+            chunk->overflowBits = 0;
+            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
+            for (size_t i = 0; i < kNumElementsInChunk; i++, itemKey++)
+            {
+                // fill with empty keys
+                if constexpr (std::is_trivially_constructible<TKey>::value)
+                {
+                    *itemKey = TKeyInfo::getEmpty();
+                }
+                else
+                {
+                    construct<TKey>(itemKey, TKeyInfo::getEmpty());
+                }
+            }
+        }
+
+        // note: num buckets is a power of 2
+        // fast log2
+
+        unsigned long idx;
+#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)
+        _BitScanReverse(&idx, unsigned long(numBuckets));
+#elif (defined(__GNUC__) && ((__GNUC__ >= 4) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) || defined(__clang__) ||                      \
+    defined(__MINGW32__) || defined(__CYGWIN__)
+        idx = (32 - __builtin_clz(numBuckets));
+#else
+    #error "Unsupported platform. Please provide BitScanReverse implementation"
+#endif
+
+        unsigned long log2 = idx;
+        unsigned long desired = (log2 << 1) + shr(log2, 2ul); // log2(numBuckets) * 2.25
+        maxLookups = std::max(uint32_t(8), uint32_t(desired));
+        maxLookups = std::min(maxLookups, numBuckets);
+
+        maxEmplaceStepsCount = 0;
     }
 
     inline void destroy()
@@ -544,99 +645,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     {
     }
 
-    explicit HashTable(uint32_t _numBuckets)
-    {
-        _numBuckets = (_numBuckets < kMinNumberOfBuckets) ? kMinNumberOfBuckets : _numBuckets;
-
-        // numBuckets has to be power-of-two
-        CHHT_ASSERT((_numBuckets & (_numBuckets - 1)) == 0);
-
-        size_t numChunks = shr(size_t(_numBuckets), size_t(kDivideToNumElements));
-
-        size_t numBytesKeys = numChunks * sizeof(Chunk);
-        size_t numBytesKeysAligned = align(numBytesKeys, alignof(ValueStorage));
-
-        size_t alignment = alignof(Chunk);
-        size_t numBytesValues = 0;
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-        {
-            numBytesValues = numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
-            alignment = std::max(alignment, alignof(ValueStorage));
-        }
-
-        alignment = std::max(alignment, size_t(16));
-        size_t numBytesTotal = numBytesKeysAligned + numBytesValues;
-        numBytesTotal = align(numBytesTotal, alignment);
-
-        CHHT_ASSERT((numBytesTotal % alignment) == 0);
-
-        void* raw = CHHT_ALLOC(numBytesTotal, alignment);
-        CHHT_ASSERT(raw);
-        chunksStorage = (Chunk*)raw;
-        CHHT_ASSERT(raw == chunksStorage);
-        CHHT_ASSERT(chunksStorage);
-        CHHT_ASSERT(isPointerAligned(chunksStorage, alignof(Chunk)));
-
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-        {
-            valuesStorage = (ValueStorage*)(reinterpret_cast<char*>(raw) + numBytesKeysAligned);
-            CHHT_ASSERT(valuesStorage);
-            CHHT_ASSERT(isPointerAligned(valuesStorage, alignof(ValueStorage)));
-        }
-        else
-        {
-            valuesStorage = nullptr;
-        }
-
-        CHHT_ASSERT(numChunks > 0);
-        chunkMod = uint32_t(numChunks - 1);
-        numBuckets = _numBuckets;
-        numElements = 0;
-
-        lastChunk = &chunksStorage[chunkMod];
-
-        // initialize keys
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-
-        for (; chunk <= lastValidChunk; chunk++)
-        {
-            chunk->overflowBits = 0;
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-            for (size_t i = 0; i < kNumElementsInChunk; i++, itemKey++)
-            {
-                // fill with empty keys
-                if constexpr (std::is_trivially_constructible<TKey>::value)
-                {
-                    *itemKey = TKeyInfo::getEmpty();
-                }
-                else
-                {
-                    construct<TKey>(itemKey, TKeyInfo::getEmpty());
-                }
-            }
-        }
-
-        // note: num buckets is a power of 2
-        // fast log2
-
-        unsigned long idx;
-#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)
-        _BitScanReverse(&idx, unsigned long(numBuckets));
-#elif (defined(__GNUC__) && ((__GNUC__ >= 4) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) || defined(__clang__) ||                      \
-    defined(__MINGW32__) || defined(__CYGWIN__)
-        idx = (32 - __builtin_clz(numBuckets));
-#else
-    #error "Unsupported platform. Please provide BitScanReverse implementation"
-#endif
-
-        unsigned long log2 = idx;
-        unsigned long desired = (log2 << 1) + shr(log2, 2ul); // log2(numBuckets) * 2.25
-        maxLookups = std::max(uint32_t(8), uint32_t(desired));
-        maxLookups = std::min(maxLookups, numBuckets);
-
-        maxEmplaceStepsCount = 0;
-    }
+    explicit HashTable(uint32_t _numBuckets) { create(_numBuckets); }
 
     ~HashTable()
     {
@@ -711,6 +720,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // TODO: shrink if needed?
         numElements = 0;
+        maxEmplaceStepsCount = 0;
     }
 
     template <typename TK, class... Args> inline std::pair<TValue*, bool> emplace(TK&& key, Args&&... args)
@@ -806,7 +816,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return false;
         }
 
+        CHHT_ASSERT(numElements != 0);
         numElements--;
+        maxEmplaceStepsCount = (numElements == 0) ? 0 : maxEmplaceStepsCount;
+
         if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
                       (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
         {
@@ -882,6 +895,44 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     Values values() { return Values(this); }
     Items items() { return Items(this); }
+
+    // copy ctor
+    HashTable(const HashTable& other)
+    {
+        create(other.capacity());
+        copyOrMoveTo(*this, other);
+    }
+
+    // copy assignment
+    HashTable& operator=(const HashTable& other)
+    {
+        uint32_t newSize = other.capacity();
+        HashTable newHash(newSize);
+        copyOrMoveTo(newHash, other);
+        swap(newHash);
+        return *this;
+    }
+
+    // move ctor
+    HashTable(HashTable&& other)
+        : chunksStorage(nullptr)
+        , lastChunk(nullptr)
+        , valuesStorage(nullptr)
+        , chunkMod(0)
+        , numElements(0)
+        , numBuckets(0)
+        , maxEmplaceStepsCount(0)
+        , maxLookups(0)
+    {
+        swap(other);
+    }
+
+    // move assignment
+    HashTable& operator=(HashTable&& other)
+    {
+        swap(other);
+        return *this;
+    }
 
   private:
     Chunk* chunksStorage;
