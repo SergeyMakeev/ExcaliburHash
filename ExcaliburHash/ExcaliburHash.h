@@ -64,9 +64,9 @@ namespace Excalibur
 // generic type (without implementation)
 template <typename T> struct KeyInfo
 {
-    static inline T getEmpty() noexcept;         /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
-    static uint64_t hash(const T& key) noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
-    static bool isEqual(const T& lhs, const T& rhs) noexcept; /*
+    static inline T getEmpty() noexcept;                /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
+    static inline uint64_t hash(const T& key) noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
+    static inline bool isEqual(const T& lhs, const T& rhs) noexcept; /*
     {
         static_assert(false, "Please provide a template specialization for type T");
     }
@@ -76,23 +76,23 @@ template <typename T> struct KeyInfo
 template <> struct KeyInfo<int>
 {
     static inline int getEmpty() noexcept { return 0x7fffffff; }
-    static uint64_t hash(const int& key) noexcept { return key; }
-    static bool isEqual(const int& lhs, const int& rhs) noexcept { return lhs == rhs; }
+    static inline uint64_t hash(const int& key) noexcept { return key; }
+    static inline bool isEqual(const int& lhs, const int& rhs) noexcept { return lhs == rhs; }
 };
 
 template <> struct KeyInfo<uint32_t>
 {
     static inline uint32_t getEmpty() noexcept { return 0xffffffff; }
-    static uint64_t hash(const uint32_t& key) noexcept { return key; }
-    static bool isEqual(const uint32_t& lhs, const uint32_t& rhs) noexcept { return lhs == rhs; }
+    static inline uint64_t hash(const uint32_t& key) noexcept { return key; }
+    static inline bool isEqual(const uint32_t& lhs, const uint32_t& rhs) noexcept { return lhs == rhs; }
 };
 
 /*
 template <> struct KeyInfo<std::string>
 {
     static inline std::string getEmpty() noexcept { return std::string(); }
-    static uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
-    static bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
+    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
+    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
 };
 */
 
@@ -142,6 +142,18 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     {
         static_assert(std::is_integral<T>::value && std::is_unsigned<T>::value, "Type T should be an integral unsigned type.");
         return (v >> shift);
+    }
+
+    static inline ChunkBits_t bitmask(ChunkBits_t from, ChunkBits_t to)
+    {
+        CHHT_ASSERT(to >= from);
+        constexpr ChunkBits_t allOnes = ChunkBits_t(-1);
+        constexpr ChunkBits_t kNumBits = sizeof(ChunkBits_t) * 8;
+
+        // if to == from then we need only single bit
+        ChunkBits_t shiftAmount = (kNumBits - 1) - (to - from);
+        ChunkBits_t res = shr(allOnes, shiftAmount) << from;
+        return res;
     }
 
     /*
@@ -749,24 +761,27 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         Chunk* const CHHT_RESTRICT firstValidChunk = &chunksStorage[0];
         Chunk* CHHT_RESTRICT chunk = &chunksStorage[chunkIndex];
         TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
-        ChunkBits_t mask = (ChunkBits_t(1) << ChunkBits_t(startSubIndex));
         uint32_t stepsCount = 0;
 
         for (size_t probe = startProbe; probe < endProbe;)
         {
-            ChunkBits_t overflowBitmask = 0x0;
             for (size_t subIndex = startSubIndex; subIndex < kNumElementsInChunk; subIndex++, probe++, itemKey++, stepsCount++)
             {
-                CHHT_ASSERT(mask == (ChunkBits_t(1) << ChunkBits_t(subIndex)));
-
-                overflowBitmask |= mask;
-                mask = mask << 1;
                 if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
                 {
                     *itemKey = std::move(key);
-                    chunk->overflowBits |= overflowBitmask;
+                    chunk->overflowBits |= bitmask(ChunkBits_t(startSubIndex), ChunkBits_t(subIndex));
                     numElements++;
                     maxEmplaceStepsCount = std::max(stepsCount, maxEmplaceStepsCount);
+
+                    // debug only
+                    /*
+                    if (stepsCount >= 128)
+                    {
+                        stepsCount = 127;
+                    }
+                    histo[stepsCount].val++;
+                    */
 
                     if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                     {
@@ -793,9 +808,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                     }
                 }
             }
-
-            chunk->overflowBits |= overflowBitmask;
-            mask = 1;
+            chunk->overflowBits |= bitmask(ChunkBits_t(startSubIndex), ChunkBits_t(kNumElementsInChunk - 1));
             startSubIndex = 0;
             chunk = (chunk == lastValidChunk) ? firstValidChunk : (chunk + 1);
             itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
@@ -848,14 +861,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return erase(it);
     }
 
-    struct convertibleToDefaultValue
-    {
-        operator TValue() const { return TValue(); }
-    };
-
     inline TValue& operator[](const TKey& key)
     {
-        auto it = emplace(key, convertibleToDefaultValue());
+        auto it = emplace(key);
         return *it.first;
     }
 
@@ -934,6 +942,13 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return *this;
     }
 
+/*
+    // debug only
+    uint32_t getMaxEmplaceStepsCount() const { return maxEmplaceStepsCount; }
+    uint32_t getMaxLookups() const { return maxLookups; }
+    float getLoadFactor() const { return size() / float(capacity()); };
+*/
+
   private:
     Chunk* chunksStorage;
     Chunk* lastChunk;
@@ -943,6 +958,16 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     uint32_t numBuckets;
     uint32_t maxEmplaceStepsCount;
     uint32_t maxLookups;
+
+/*
+    // debug only
+public:
+    struct bucket
+    {
+        uint32_t val = 0;
+    };
+    bucket histo[128];
+*/
 };
 
 } // namespace Excalibur

@@ -1,6 +1,7 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
+#if 1
 struct CustomStruct
 {
     int v;
@@ -11,13 +12,13 @@ namespace Excalibur
 template <> struct KeyInfo<CustomStruct>
 {
     static inline CustomStruct getEmpty() noexcept { return CustomStruct{2147483647}; }
-    static uint64_t hash(const CustomStruct& /*key*/) noexcept
+    static inline uint64_t hash(const CustomStruct& /*key*/) noexcept
     {
         // Note: this is a very bad hash function
         // added intentionally for the test
         return 3;
     }
-    static bool isEqual(const CustomStruct& lhs, const CustomStruct& rhs) noexcept { return lhs.v == rhs.v; }
+    static inline bool isEqual(const CustomStruct& lhs, const CustomStruct& rhs) noexcept { return lhs.v == rhs.v; }
 };
 
 } // namespace Excalibur
@@ -63,8 +64,8 @@ namespace Excalibur
 template <> struct KeyInfo<std::string>
 {
     static inline std::string getEmpty() noexcept { return std::string(); }
-    static uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
-    static bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
+    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
+    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
 };
 } // namespace Excalibur
 
@@ -290,3 +291,4 @@ TEST(SmFlatHashMap, MoveTest)
     EXPECT_EQ(ht3.size(), uint32_t(1));
     EXPECT_NE(ht3.find(1), ht3.iend());
 }
+#endif

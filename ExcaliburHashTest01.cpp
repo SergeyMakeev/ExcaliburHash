@@ -2,6 +2,128 @@
 #include "gtest/gtest.h"
 #include <array>
 
+
+#include <unordered_set>
+#include <random>
+#include <algorithm>
+
+#if 0
+
+const std::vector<int>& getUniquePositiveRandomNumbers()
+{
+    const size_t kNumberOfItems = 1000000;
+    static std::vector<int> data;
+    if (data.empty())
+    {
+        std::random_device randDev;
+        std::mt19937 generator(randDev());
+        std::uniform_int_distribution<int> distr(1, std::numeric_limits<int>::max() - 1);
+
+        std::set<int> uniques;
+        while (uniques.size() < kNumberOfItems)
+        {
+            uniques.insert(distr(generator));
+        }
+
+        data.resize(kNumberOfItems);
+        std::copy(uniques.begin(), uniques.end(), data.begin());
+    }
+    return data;
+}
+
+// 10% of the resulting data set is intersected
+const std::vector<int>& getRandomNumbersWithIntersections10()
+{
+    static std::vector<int> data;
+    if (data.empty())
+    {
+        data = getUniquePositiveRandomNumbers();
+        size_t cutoff = (data.size() / 10);
+        size_t j = 0;
+        for (size_t i = cutoff; i < data.size(); i++, j++)
+        {
+            data[i] = data[j];
+        }
+        std::random_device rd;
+        std::mt19937 g(rd());
+        std::shuffle(data.begin(), data.end(), g);
+    }
+    return data;
+}
+
+// 50% of the resulting data set is intersected
+const std::vector<int>& getRandomNumbersWithIntersections50()
+{
+    static std::vector<int> data;
+    if (data.empty())
+    {
+        data = getUniquePositiveRandomNumbers();
+        size_t cutoff = (data.size() / 2);
+        size_t j = 0;
+        for (size_t i = cutoff; i < data.size(); i++, j++)
+        {
+            data[i] = data[j];
+        }
+        std::random_device rd;
+        std::mt19937 g(rd());
+        std::shuffle(data.begin(), data.end(), g);
+    }
+    return data;
+}
+
+struct PreMain
+{
+    PreMain()
+    {
+        getUniquePositiveRandomNumbers();
+        getRandomNumbersWithIntersections10();
+        getRandomNumbersWithIntersections50();
+    }
+};
+
+PreMain preMain;
+
+
+struct Value
+{
+    int val = 0;
+};
+
+TEST(SmFlatHashMap, PerfTest)
+{
+    printf("Start test\n");
+    const std::vector<int>& randomNumbers = getRandomNumbersWithIntersections10();
+    //for (int i = 0; i < 10000; i++)
+    for (int i = 0; i < 1; i++)
+    {
+        Excalibur::HashTable<int, Value> hashMap;
+        for (const int& num : randomNumbers)
+        {
+            hashMap[num].val++;
+        }
+
+        uint32_t vv = hashMap.getMaxEmplaceStepsCount();
+        uint32_t dd = hashMap.getMaxLookups();
+        float lf = hashMap.getLoadFactor();
+        printf("%d / %d (%3.2f)\n", vv, dd, lf);
+
+        int total = 0;
+        for (int j = 0; j < 128; j++)
+        {
+            total += hashMap.histo[j].val;
+        }
+
+        printf("total = %d\n", total);
+
+        for (int j = 0; j < 128; j++)
+        {
+            printf("[%d] = %3.2f\n", j + 1, 100.0f * (hashMap.histo[j].val / float(total)));
+        }
+    } 
+}
+#endif
+
+#if 1
 TEST(SmFlatHashMap, EmpltyValuesTest)
 {
     // use hash table as map (no values stored at all)
@@ -231,8 +353,8 @@ namespace Excalibur
 template <> struct KeyInfo<Bar>
 {
     static inline Bar getEmpty() noexcept { return Bar{std::numeric_limits<int>::min()}; }
-    static uint64_t hash(const Bar& key) noexcept { return std::hash<int>{}(key.v); }
-    static bool isEqual(const Bar& lhs, const Bar& rhs) noexcept { return lhs.v == rhs.v; }
+    static inline uint64_t hash(const Bar& key) noexcept { return std::hash<int>{}(key.v); }
+    static inline bool isEqual(const Bar& lhs, const Bar& rhs) noexcept { return lhs.v == rhs.v; }
 };
 } // namespace Excalibur
 
@@ -309,3 +431,4 @@ TEST(SmFlatHashMap, IteratorTestEdgeCases)
     EXPECT_EQ(valuesSumTestA3, valSum2);
     EXPECT_EQ(valuesSumTestB3, valSum2);
 }
+#endif

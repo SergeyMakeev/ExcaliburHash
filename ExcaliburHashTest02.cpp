@@ -1,6 +1,7 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
+#if 1
 static int ctorCallCount = 0;
 static int dtorCallCount = 0;
 static int assignCallCount = 0;
@@ -40,8 +41,8 @@ namespace Excalibur
 template <> struct KeyInfo<ComplexStruct>
 {
     static inline ComplexStruct getEmpty() noexcept { return ComplexStruct{0xffffffff}; }
-    static uint64_t hash(const ComplexStruct& key) noexcept { return std::hash<uint32_t>{}(key.v); }
-    static bool isEqual(const ComplexStruct& lhs, const ComplexStruct& rhs) noexcept { return lhs.v == rhs.v; }
+    static inline uint64_t hash(const ComplexStruct& key) noexcept { return std::hash<uint32_t>{}(key.v); }
+    static inline bool isEqual(const ComplexStruct& lhs, const ComplexStruct& rhs) noexcept { return lhs.v == rhs.v; }
 };
 
 } // namespace Excalibur
@@ -112,3 +113,4 @@ TEST(SmFlatHashMap, BasicTest33)
 
     EXPECT_EQ(ctorCallCount, dtorCallCount);
 }
+#endif
