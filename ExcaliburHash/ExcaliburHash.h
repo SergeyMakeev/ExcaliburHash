@@ -23,6 +23,14 @@
 #if !defined(CHHT_ASSERT)
     #include <assert.h>
     #define CHHT_ASSERT(expression) assert(expression)
+/*
+    #define CHHT_ASSERT(expr)                                                                                                              \
+        do                                                                                                                                 \
+        {                                                                                                                                  \
+            if (!(expr))                                                                                                                   \
+                _CrtDbgBreak();                                                                                                            \
+        } while (0)
+*/
 #endif
 
 #if !defined(CHHT_RESTRICT)
@@ -118,13 +126,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     using ValueStorage = typename std::aligned_storage<sizeof(TValue), alignof(TValue)>::type;
 
     static inline constexpr uint32_t kMinNumberOfChunks = 2;
-
-    using ChunkBits_t = uint32_t;
-    static inline constexpr uint64_t kNumElementsInChunk = 32;                    // ChunkBits_t = 32 bits
-    static inline constexpr uint64_t kNumElementsMod = (kNumElementsInChunk - 1); // 31
-    static inline constexpr uint64_t kDivideToNumElements = 5;                    // (X >> 6) = (X / kNumElementsInChunk)
-
-    static inline constexpr uint64_t kMinNumberOfBuckets = kNumElementsInChunk * kMinNumberOfChunks;
+    static inline constexpr uint64_t kNumElementsInChunk = 16;
 
     struct ItemAddr
     {
@@ -133,9 +135,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // index within chunk (lower 6 bits) (TODO: use smaller data type?)
         size_t subIndex;
-
-        // "global" index = (chunk * kNumElementsInChunk + subIndex)
-        size_t globalIndex;
     };
 
     template <typename T> static inline T shr(T v, T shift) noexcept
@@ -144,36 +143,33 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (v >> shift);
     }
 
-    static inline ChunkBits_t bitmask(ChunkBits_t from, ChunkBits_t to)
-    {
-        CHHT_ASSERT(to >= from);
-        constexpr ChunkBits_t allOnes = ChunkBits_t(-1);
-        constexpr ChunkBits_t kNumBits = sizeof(ChunkBits_t) * 8;
-
-        // if to == from then we need only single bit
-        ChunkBits_t shiftAmount = (kNumBits - 1) - (to - from);
-        ChunkBits_t res = shr(allOnes, shiftAmount) << from;
-        return res;
-    }
-
     /*
 
     convert hash value to entry point address (chunk + slot)
 
     */
-    static inline ItemAddr hashToEntryPointAddress(uint64_t hashValue, uint64_t chunkMod) noexcept
+    static inline ItemAddr hashToEntryPointAddress(uint64_t hashValue, size_t chunkMod) noexcept
     {
-        // lower 6 bits = internal chunk subIndex
-        const size_t subIndex = size_t(hashValue & kNumElementsMod);
-        // upper 58 bits = chunk index
-        const size_t chunk = size_t(shr(hashValue, kDivideToNumElements) & chunkMod);
-        const size_t globalIndex = size_t(chunk * size_t(kNumElementsInChunk) + subIndex);
-        return {chunk, subIndex, globalIndex};
+        CHHT_ASSERT(chunkMod > 0);
+        const size_t subIndex = size_t(hashValue % kNumElementsInChunk);
+        const size_t chunk = (size_t(hashValue / kNumElementsInChunk) & chunkMod);
+        return {chunk, subIndex};
     }
 
     struct Chunk
     {
-        ChunkBits_t overflowBits;
+        union
+        {
+            struct
+            {
+                uint16_t numEntries;
+                uint16_t maxProbeLength;
+            } meta;
+            struct
+            {
+                uint32_t meta;
+            } fc;
+        } header;
         KeyStorage keys[kNumElementsInChunk];
     };
 
@@ -212,9 +208,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 {
                     if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
                     {
-                        size_t chunkIndex = shr(firstValidIndex, size_t(kDivideToNumElements));
-                        size_t chunkSubIndex = size_t(firstValidIndex & kNumElementsMod);
-                        return TIterator(&ht, chunkIndex, chunkSubIndex);
+                        size_t chunkIndex = firstValidIndex / size_t(kNumElementsInChunk);
+                        size_t chunkSubIndex = firstValidIndex % size_t(kNumElementsInChunk);
+
+                        const uint64_t hashValue = TKeyInfo::hash(*itemKey);
+                        const ItemAddr addr = hashToEntryPointAddress(hashValue, (ht.numChunks - 1));
+                        return TIterator(&ht, chunkIndex, chunkSubIndex, addr.chunk);
                     }
                 }
             }
@@ -223,7 +222,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return end(ht);
         }
 
-        static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.chunkMod + 1, 0); }
+        static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.numChunks, 0, 0); }
     };
 
     template <typename THashTableSrc, typename THashTableDst> static inline void copyOrMoveTo(THashTableDst&& dst, THashTableSrc&& src)
@@ -233,7 +232,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return;
         }
 
-        const uint32_t numBuckets = src.numBuckets;
+        const uint32_t numBuckets = src.numChunks * kNumElementsInChunk;
 
         Chunk* CHHT_RESTRICT chunk = &src.chunksStorage[0];
         for (size_t globalIndex = 0; globalIndex < numBuckets;)
@@ -260,8 +259,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     inline void rehash()
     {
-        uint32_t newSize = capacity() * 2;
-        HashTable newHash(newSize);
+        uint32_t newNumChunks = numChunks * 2;
+        HashTable newHash(newNumChunks);
         copyOrMoveTo(newHash, std::move(*this));
         swap(newHash);
     }
@@ -273,37 +272,29 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         const uint32_t _numBucketsDiv2 = shr(_numBuckets, 1u);
         const uint32_t _numBucketsDiv4 = shr(_numBuckets, 2u);
         const uint32_t numBucketsThreshold = _numBucketsDiv2 + _numBucketsDiv4;
-
-        // if we have too much lookups (more than we estimated) and loadfactor > 1/8 then rehash
-        const bool reshashBecauseForTooMuchCollisions = (maxEmplaceStepsCount > maxLookups) && (numElements >= shr(_numBucketsDiv4, 1u));
-
-        // The selected hash function does not seem to do its job very well (performance warning?)
-        // CHHT_ASSERT(maxEmplaceStepsCount > maxLookups && !reshashBecauseForTooMuchCollisions);
-
         const bool reshashBecauseLoadFactorIsTooHigh = (numElements >= numBucketsThreshold);
-        if (reshashBecauseLoadFactorIsTooHigh || reshashBecauseForTooMuchCollisions)
+        if (reshashBecauseLoadFactorIsTooHigh)
         {
             rehash();
         }
     }
 
-    inline void create(uint32_t _numBuckets)
+    inline void create(uint32_t _numChunks)
     {
-        _numBuckets = (_numBuckets < kMinNumberOfBuckets) ? kMinNumberOfBuckets : _numBuckets;
+        _numChunks = (_numChunks < kMinNumberOfChunks) ? kMinNumberOfChunks : _numChunks;
 
         // numBuckets has to be power-of-two
-        CHHT_ASSERT((_numBuckets & (_numBuckets - 1)) == 0);
+        CHHT_ASSERT(_numChunks > 0);
+        CHHT_ASSERT((_numChunks & (_numChunks - 1)) == 0);
 
-        size_t numChunks = shr(size_t(_numBuckets), size_t(kDivideToNumElements));
-
-        size_t numBytesKeys = numChunks * sizeof(Chunk);
+        size_t numBytesKeys = _numChunks * sizeof(Chunk);
         size_t numBytesKeysAligned = align(numBytesKeys, alignof(ValueStorage));
 
         size_t alignment = alignof(Chunk);
         size_t numBytesValues = 0;
         if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
         {
-            numBytesValues = numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
+            numBytesValues = _numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
             alignment = std::max(alignment, alignof(ValueStorage));
         }
 
@@ -331,12 +322,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             valuesStorage = nullptr;
         }
 
-        CHHT_ASSERT(numChunks > 0);
-        chunkMod = uint32_t(numChunks - 1);
-        numBuckets = _numBuckets;
+        CHHT_ASSERT(_numChunks > 0);
+        numChunks = _numChunks;
         numElements = 0;
 
-        lastChunk = &chunksStorage[chunkMod];
+        lastChunk = &chunksStorage[_numChunks - 1];
 
         // initialize keys
         Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
@@ -344,7 +334,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         for (; chunk <= lastValidChunk; chunk++)
         {
-            chunk->overflowBits = 0;
+            chunk->header.fc.meta = 0;
             TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
             for (size_t i = 0; i < kNumElementsInChunk; i++, itemKey++)
             {
@@ -359,26 +349,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 }
             }
         }
-
-        // note: num buckets is a power of 2
-        // fast log2
-
-        unsigned long idx;
-#if defined(_MSC_VER) || defined(__ICL) || defined(__INTEL_COMPILER)
-        _BitScanReverse(&idx, unsigned long(numBuckets));
-#elif (defined(__GNUC__) && ((__GNUC__ >= 4) || ((__GNUC__ == 3) && (__GNUC_MINOR__ >= 4)))) || defined(__clang__) ||                      \
-    defined(__MINGW32__) || defined(__CYGWIN__)
-        idx = (32 - __builtin_clz(numBuckets));
-#else
-    #error "Unsupported platform. Please provide BitScanReverse implementation"
-#endif
-
-        unsigned long log2 = idx;
-        unsigned long desired = (log2 << 1) + shr(log2, 2ul); // log2(numBuckets) * 2.25
-        maxLookups = std::max(uint32_t(8), uint32_t(desired));
-        maxLookups = std::min(maxLookups, numBuckets);
-
-        maxEmplaceStepsCount = 0;
     }
 
     inline void destroy()
@@ -423,58 +393,49 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     template <typename TIteratorType> inline TIteratorType findImpl(const TKey& key) const noexcept
     {
         CHHT_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
-
         if (empty())
         {
             return IteratorHelper<TIteratorType>::end(*this);
         }
 
-        const uint64_t hashValue = TKeyInfo::hash(key);
-        const ItemAddr addr = hashToEntryPointAddress(hashValue, chunkMod);
+        CHHT_ASSERT(numChunks > 0);
 
-        size_t startSubIndex = addr.subIndex;
+        const uint64_t hashValue = TKeyInfo::hash(key);
+        const ItemAddr addr = hashToEntryPointAddress(hashValue, (numChunks - 1));
+        size_t chunkSubIndex = addr.subIndex;
         size_t chunkIndex = addr.chunk;
 
-        CHHT_ASSERT(chunkMod > 0);
-        CHHT_ASSERT(numBuckets > 0 && (numBuckets & (numBuckets - 1)) == 0);
-        // const size_t numBucketsMod = (numBuckets - 1);
+        CHHT_ASSERT(chunkIndex < numChunks);
+        Chunk* CHHT_RESTRICT entryChunk = &chunksStorage[chunkIndex];
+        Chunk* CHHT_RESTRICT chunk = entryChunk;
 
-        const size_t startProbe = addr.globalIndex;
-        const size_t endProbe = startProbe + size_t(maxEmplaceStepsCount) + 1;
+        const size_t maxProbeLength = entryChunk->header.meta.maxProbeLength;
+        const size_t _numChunks = numChunks;
 
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-        Chunk* const CHHT_RESTRICT firstValidChunk = &chunksStorage[0];
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[chunkIndex];
-        TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
-        ChunkBits_t overflowBitmask = (ChunkBits_t(1) << ChunkBits_t(startSubIndex));
-        for (size_t probe = startProbe; probe < endProbe; chunkIndex++)
+        for (size_t probe = 0;;)
         {
-            const ChunkBits_t overflowBits = chunk->overflowBits;
-            for (size_t subIndex = startSubIndex; subIndex < kNumElementsInChunk; subIndex++, probe++, itemKey++)
+            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[chunkSubIndex]);
+            for (; chunkSubIndex < kNumElementsInChunk; chunkSubIndex++, probe++, itemKey++)
             {
                 if (TKeyInfo::isEqual(key, *itemKey))
                 {
-                    return TIteratorType(this, chunkIndex, subIndex);
+                    return TIteratorType(this, chunkIndex, chunkSubIndex, addr.chunk);
                 }
 
-                CHHT_ASSERT(overflowBitmask == (ChunkBits_t(1) << ChunkBits_t(subIndex)));
-                if ((overflowBits & overflowBitmask) == 0)
+                if (probe > maxProbeLength)
                 {
                     return IteratorHelper<TIteratorType>::end(*this);
                 }
-
-                overflowBitmask = overflowBitmask << 1;
             }
-            startSubIndex = 0;
-            overflowBitmask = 1;
-            chunk = (chunk == lastValidChunk) ? firstValidChunk : (chunk + 1);
-            itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
+            chunkSubIndex = 0;
+            chunkIndex++;
+            chunkIndex = (chunkIndex == _numChunks) ? 0 : chunkIndex;
+            CHHT_ASSERT(chunkIndex < numChunks);
+            chunk = &chunksStorage[chunkIndex];
         }
-
-        // hash table is 100% full? this should never happen
-        CHHT_ASSERT(false);
-        return IteratorHelper<TIteratorType>::end(*this);
     }
+
+    explicit HashTable(uint32_t _numChunks) { create(_numChunks); }
 
   public:
     class IteratorBase
@@ -497,25 +458,28 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         IteratorBase() = delete;
 
-        IteratorBase(const HashTable* _ht, size_t _chunkIndex, size_t _chunkSubIndex) noexcept
+        IteratorBase(const HashTable* _ht, size_t _chunkIndex, size_t _chunkSubIndex, size_t _entryChunkIndex) noexcept
             : ht(_ht)
             , chunkIndex(_chunkIndex)
             , chunkSubIndex(_chunkSubIndex)
+            , entryChunkIndex(_entryChunkIndex)
         {
         }
 
         bool operator==(const IteratorBase& other) const noexcept
         {
+            /* note: we intentionally skip the following check (entryChunkIndex == other.entryChunkIndex) */
             return ht == other.ht && chunkIndex == other.chunkIndex && chunkSubIndex == other.chunkSubIndex;
         }
         bool operator!=(const IteratorBase& other) const noexcept
         {
+            /* note: we intentionally skip the following check (entryChunkIndex != other.entryChunkIndex) */
             return ht != other.ht || chunkIndex != other.chunkIndex || chunkSubIndex != other.chunkSubIndex;
         }
 
         IteratorBase& operator++() noexcept
         {
-            size_t lastChunkIndex = ht->chunkMod;
+            size_t _numChunks = ht->numChunks;
             do
             {
                 chunkSubIndex++;
@@ -524,7 +488,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                     chunkIndex++;
                     chunkSubIndex = 0;
                 }
-            } while (chunkIndex <= lastChunkIndex && TKeyInfo::isEqual(TKeyInfo::getEmpty(), *getKey()));
+            } while (chunkIndex < _numChunks && TKeyInfo::isEqual(TKeyInfo::getEmpty(), *getKey()));
 
             return *this;
         }
@@ -536,10 +500,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return res;
         }
 
-      private:
+      protected:
         const HashTable* ht;
         size_t chunkIndex;
         size_t chunkSubIndex;
+        size_t entryChunkIndex;
 
         friend class HashTable<TKey, TValue, TKeyInfo>;
     };
@@ -549,8 +514,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         IteratorK() = delete;
 
-        IteratorK(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex)
+        IteratorK(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
+            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
         {
         }
 
@@ -563,8 +528,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorV() = delete;
 
-        TIteratorV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex)
+        TIteratorV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
+            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
         {
         }
 
@@ -575,7 +540,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     template <typename TIteratorValue> class TIteratorKV : public IteratorBase
     {
       public:
-        // pretty much similar to std::reference_wrapper, but support late initialization
+        // pretty much similar to std::reference_wrapper, but supports late initialization
         template <typename TYPE> struct reference
         {
             TYPE* ptr = nullptr;
@@ -615,8 +580,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorKV() = delete;
 
-        TIteratorKV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex)
+        TIteratorKV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
+            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
             , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
         {
         }
@@ -649,15 +614,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         : chunksStorage(nullptr)
         , lastChunk(nullptr)
         , valuesStorage(nullptr)
-        , chunkMod(0)
+        , numChunks(0)
         , numElements(0)
-        , numBuckets(0)
-        , maxEmplaceStepsCount(0)
-        , maxLookups(0)
     {
     }
-
-    explicit HashTable(uint32_t _numBuckets) { create(_numBuckets); }
 
     ~HashTable()
     {
@@ -671,14 +631,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
             CHHT_FREE(chunksStorage);
         }
-
-        //
-        // TODO: DEBUG only?
-        //
-        // chunksStorage = nullptr;
-        // valuesStorage = nullptr;
-        // numBuckets = 0;
-        // numElements = 0;
     }
 
     inline void swap(HashTable& other) noexcept
@@ -686,11 +638,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         std::swap(chunksStorage, other.chunksStorage);
         std::swap(lastChunk, other.lastChunk);
         std::swap(valuesStorage, other.valuesStorage);
-        std::swap(numBuckets, other.numBuckets);
+        std::swap(numChunks, other.numChunks);
         std::swap(numElements, other.numElements);
-        std::swap(chunkMod, other.chunkMod);
-        std::swap(maxLookups, other.maxLookups);
-        std::swap(maxEmplaceStepsCount, other.maxEmplaceStepsCount);
     }
 
     inline void clear()
@@ -712,7 +661,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
             TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
             TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
-            chunk->overflowBits = 0;
+            chunk->header.fc.meta = 0;
             for (; itemKey < endItemKey; itemValue++, itemKey++)
             {
                 if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
@@ -732,7 +681,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // TODO: shrink if needed?
         numElements = 0;
-        maxEmplaceStepsCount = 0;
     }
 
     template <typename TK, class... Args> inline std::pair<TValue*, bool> emplace(TK&& key, Args&&... args)
@@ -744,48 +692,42 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         rehash_if_need();
 
+        CHHT_ASSERT(numChunks > 0);
+
         const uint64_t hashValue = TKeyInfo::hash(key);
-        const ItemAddr addr = hashToEntryPointAddress(hashValue, chunkMod);
+        const size_t maxProbeLength = 0xffff; // due to use of uint16_t in chunk header probe length cannot be greater that 65535
+        const size_t _numChunks = numChunks;
 
-        size_t startSubIndex = addr.subIndex;
-        const size_t chunkIndex = addr.chunk;
+        const ItemAddr addr = hashToEntryPointAddress(hashValue, (numChunks - 1));
+        size_t chunkSubIndex = addr.subIndex;
+        size_t chunkIndex = addr.chunk;
 
-        CHHT_ASSERT(chunkMod > 0);
-        CHHT_ASSERT(numBuckets > 0 && (numBuckets & (numBuckets - 1)) == 0);
-        const size_t numBucketsMod = (numBuckets - 1);
+        CHHT_ASSERT(chunkIndex < numChunks);
+        Chunk* CHHT_RESTRICT entryChunk = &chunksStorage[chunkIndex];
+        Chunk* CHHT_RESTRICT chunk = entryChunk;
 
-        const size_t startProbe = addr.globalIndex;
-        const size_t endProbe = startProbe + numBuckets;
-
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-        Chunk* const CHHT_RESTRICT firstValidChunk = &chunksStorage[0];
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[chunkIndex];
-        TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
-        uint32_t stepsCount = 0;
-
-        for (size_t probe = startProbe; probe < endProbe;)
+        for (size_t probe = 0;;)
         {
-            for (size_t subIndex = startSubIndex; subIndex < kNumElementsInChunk; subIndex++, probe++, itemKey++, stepsCount++)
+            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[chunkSubIndex]);
+
+            // TODO: Perf
+            // I don't need chunkSubIndex at all, I could use for(; itemKey < lastItemKeyInChunk; itemKey++) instead
+            for (; chunkSubIndex < kNumElementsInChunk; chunkSubIndex++, probe++, itemKey++)
             {
+                CHHT_ASSERT(probe < 0xffff);
                 if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
                 {
                     *itemKey = std::move(key);
-                    chunk->overflowBits |= bitmask(ChunkBits_t(startSubIndex), ChunkBits_t(subIndex));
                     numElements++;
-                    maxEmplaceStepsCount = std::max(stepsCount, maxEmplaceStepsCount);
-
-                    // debug only
-                    /*
-                    if (stepsCount >= 128)
-                    {
-                        stepsCount = 127;
-                    }
-                    histo[stepsCount].val++;
-                    */
+                    entryChunk->header.meta.numEntries++;
+                    uint16_t maxProbes = chunk->header.meta.maxProbeLength;
+                    entryChunk->header.meta.maxProbeLength = std::max(maxProbes, uint16_t(probe));
 
                     if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                     {
-                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[probe & numBucketsMod]);
+                        size_t itemIndex = (chunkIndex * kNumElementsInChunk + chunkSubIndex);
+                        CHHT_ASSERT(itemIndex < capacity());
+                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[itemIndex]);
                         construct<TValue>(itemValue, std::forward<Args>(args)...);
                         return {{itemValue}, true};
                     }
@@ -799,7 +741,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 {
                     if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
                     {
-                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[probe & numBucketsMod]);
+                        size_t itemIndex = (chunkIndex * kNumElementsInChunk + chunkSubIndex);
+                        CHHT_ASSERT(itemIndex < capacity());
+                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[itemIndex]);
                         return {{itemValue}, false};
                     }
                     else
@@ -807,16 +751,19 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                         return {{nullptr}, false};
                     }
                 }
-            }
-            chunk->overflowBits |= bitmask(ChunkBits_t(startSubIndex), ChunkBits_t(kNumElementsInChunk - 1));
-            startSubIndex = 0;
-            chunk = (chunk == lastValidChunk) ? firstValidChunk : (chunk + 1);
-            itemKey = reinterpret_cast<TKey*>(&chunk->keys[startSubIndex]);
-        }
 
-        // hash table is 100% full? this should never happen
-        CHHT_ASSERT(false);
-        return {{nullptr}, false};
+                if (probe > maxProbeLength)
+                {
+                    CHHT_ASSERT(false);
+                    return {{nullptr}, false};
+                }
+            }
+            chunkSubIndex = 0;
+            chunkIndex++;
+            chunkIndex = (chunkIndex == _numChunks) ? 0 : chunkIndex;
+            CHHT_ASSERT(chunkIndex < numChunks);
+            chunk = &chunksStorage[chunkIndex];
+        }
     }
 
     inline ConstIteratorKV find(const TKey& key) const noexcept { return findImpl<ConstIteratorKV>(key); }
@@ -831,7 +778,16 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         CHHT_ASSERT(numElements != 0);
         numElements--;
-        maxEmplaceStepsCount = (numElements == 0) ? 0 : maxEmplaceStepsCount;
+
+        Chunk* CHHT_RESTRICT chunk = &chunksStorage[it.entryChunkIndex];
+        uint16_t numEntries = chunk->header.meta.numEntries;
+        CHHT_ASSERT(numEntries != 0);
+        numEntries--;
+        if (numEntries == 0)
+        {
+            chunk->header.meta.maxProbeLength = 0;
+        }
+        chunk->header.meta.numEntries = numEntries;
 
         if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
                       (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
@@ -849,7 +805,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     inline uint32_t size() const noexcept { return numElements; }
 
-    inline uint32_t capacity() const noexcept { return numBuckets; }
+    inline uint32_t capacity() const noexcept { return (numChunks * kNumElementsInChunk); }
 
     inline bool empty() const noexcept { return (numElements == 0); }
 
@@ -907,15 +863,15 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     // copy ctor
     HashTable(const HashTable& other)
     {
-        create(other.capacity());
+        create(other.numChunks);
         copyOrMoveTo(*this, other);
     }
 
     // copy assignment
     HashTable& operator=(const HashTable& other)
     {
-        uint32_t newSize = other.capacity();
-        HashTable newHash(newSize);
+        uint32_t newNumChunks = numChunks;
+        HashTable newHash(newNumChunks);
         copyOrMoveTo(newHash, other);
         swap(newHash);
         return *this;
@@ -926,11 +882,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         : chunksStorage(nullptr)
         , lastChunk(nullptr)
         , valuesStorage(nullptr)
-        , chunkMod(0)
+        , numChunks(0)
         , numElements(0)
-        , numBuckets(0)
-        , maxEmplaceStepsCount(0)
-        , maxLookups(0)
     {
         swap(other);
     }
@@ -942,32 +895,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return *this;
     }
 
-/*
-    // debug only
-    uint32_t getMaxEmplaceStepsCount() const { return maxEmplaceStepsCount; }
-    uint32_t getMaxLookups() const { return maxLookups; }
-    float getLoadFactor() const { return size() / float(capacity()); };
-*/
-
   private:
     Chunk* chunksStorage;
     Chunk* lastChunk;
     ValueStorage* valuesStorage;
-    uint32_t chunkMod;
+    uint32_t numChunks;
     uint32_t numElements;
-    uint32_t numBuckets;
-    uint32_t maxEmplaceStepsCount;
-    uint32_t maxLookups;
-
-/*
-    // debug only
-public:
-    struct bucket
-    {
-        uint32_t val = 0;
-    };
-    bucket histo[128];
-*/
 };
 
 } // namespace Excalibur

@@ -1,7 +1,6 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
-#if 1
 struct CustomStruct
 {
     int v;
@@ -291,4 +290,3 @@ TEST(SmFlatHashMap, MoveTest)
     EXPECT_EQ(ht3.size(), uint32_t(1));
     EXPECT_NE(ht3.find(1), ht3.iend());
 }
-#endif

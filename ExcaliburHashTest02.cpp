@@ -1,7 +1,6 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
-#if 1
 static int ctorCallCount = 0;
 static int dtorCallCount = 0;
 static int assignCallCount = 0;
@@ -113,4 +112,3 @@ TEST(SmFlatHashMap, BasicTest33)
 
     EXPECT_EQ(ctorCallCount, dtorCallCount);
 }
-#endif
