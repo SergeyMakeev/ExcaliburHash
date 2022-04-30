@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 2.8.12)
 
+# set(CMAKE_CONFIGURATION_TYPES "Debug;Release" CACHE STRING "" FORCE)
+
 # if (MSVC)
-#   set(CMAKE_VS_GLOBALS "EnableASAN=true")
+#  set(CMAKE_VS_GLOBALS "EnableASAN=true")
 # endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
@@ -26,6 +28,12 @@ target_link_libraries(${TEST_EXE_NAME} gtest_main)
 if(MSVC)
   target_compile_options(${TEST_EXE_NAME} PRIVATE /W4 /WX)
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+#  target_compile_options(${TEST_EXE_NAME} PRIVATE "$<$<CONFIG:Release>:/Zi>")
+#  target_link_options(${TEST_EXE_NAME} PRIVATE "$<$<CONFIG:Release>:/DEBUG>")
+#  target_link_options(${TEST_EXE_NAME} PRIVATE "$<$<CONFIG:Release>:/OPT:REF>")
+#  target_link_options(${TEST_EXE_NAME} PRIVATE "$<$<CONFIG:Release>:/OPT:ICF>")
+
 else()
   target_compile_options(${TEST_EXE_NAME} PRIVATE -Wall -Wextra -pedantic -Werror)
 endif()

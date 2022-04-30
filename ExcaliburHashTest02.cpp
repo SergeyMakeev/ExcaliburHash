@@ -23,7 +23,11 @@ struct ComplexStruct
         ctorCallCount++;
     }
 
-    ~ComplexStruct() noexcept { dtorCallCount++; }
+    ~ComplexStruct() noexcept
+    {
+        //
+        dtorCallCount++;
+    }
 
     ComplexStruct& operator=(ComplexStruct&& other) noexcept
     {
@@ -39,6 +43,8 @@ namespace Excalibur
 {
 template <> struct KeyInfo<ComplexStruct>
 {
+    static inline bool isValid(const ComplexStruct& key) noexcept { return key.v < 0xfffffffe; }
+    static inline ComplexStruct getTombstone() noexcept { return ComplexStruct{0xfffffffe}; }
     static inline ComplexStruct getEmpty() noexcept { return ComplexStruct{0xffffffff}; }
     static inline uint64_t hash(const ComplexStruct& key) noexcept { return std::hash<uint32_t>{}(key.v); }
     static inline bool isEqual(const ComplexStruct& lhs, const ComplexStruct& rhs) noexcept { return lhs.v == rhs.v; }
@@ -46,7 +52,7 @@ template <> struct KeyInfo<ComplexStruct>
 
 } // namespace Excalibur
 
-TEST(SmFlatHashMap, BasicTest33)
+TEST(SmFlatHashMap, CtorDtorCallCount)
 {
     ctorCallCount = 0;
     dtorCallCount = 0;

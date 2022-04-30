@@ -2,7 +2,20 @@
 #include "gtest/gtest.h"
 #include <array>
 
-TEST(SmFlatHashMap, EmpltyValuesTest)
+TEST(SmFlatHashMap, SimplestTest)
+{
+    Excalibur::HashTable<int, int> ht;
+    EXPECT_TRUE(ht.empty());
+    auto it1 = ht.emplace(1, 2);
+    EXPECT_TRUE(it1.second);
+    EXPECT_EQ(ht.size(), 1u);
+    auto it2 = ht.find(1);
+    EXPECT_EQ(it1.first, it2);
+    EXPECT_EQ(it2.key(), 1);
+    EXPECT_EQ(it2.value(), 2);
+}
+
+TEST(SmFlatHashMap, EmptyValuesTest)
 {
     // use hash table as map (no values stored at all)
     Excalibur::HashTable<int, nullptr_t> ht;
@@ -13,6 +26,7 @@ TEST(SmFlatHashMap, EmpltyValuesTest)
     {
         auto it = ht.emplace(i);
         EXPECT_TRUE(it.second);
+        EXPECT_EQ(ht.size(), uint32_t(i));
     }
     EXPECT_FALSE(ht.empty());
 
@@ -75,12 +89,13 @@ TEST(SmFlatHashMap, BasicTest)
     for (uint32_t i = 0; i < kNumElements; i++)
     {
         int k = 256 * i + 1;
+
         auto it = ht.emplace(k, -13);
         EXPECT_FALSE(it.second);
 
-        ASSERT_NE(it.first, nullptr);
+        ASSERT_NE(it.first, ht.iend());
         int refVal = 3 + i;
-        EXPECT_EQ(*it.first, refVal);
+        EXPECT_EQ(it.first.value(), refVal);
     }
     EXPECT_FALSE(ht.empty());
     EXPECT_EQ(ht.size(), kNumElements);
@@ -90,7 +105,6 @@ TEST(SmFlatHashMap, BasicTest)
     for (uint32_t i = 0; i < kNumElements; i++)
     {
         int k = 256 * i + 1;
-
         auto htVal = ht.find(k);
         ASSERT_NE(htVal, ht.iend());
 
@@ -148,7 +162,8 @@ TEST(SmFlatHashMap, IteratorTest)
     EXPECT_EQ(ht.size(), 0u);
     EXPECT_EQ(ht.capacity(), 0u);
 
-    const int kNumElements = 1333;
+    // const int kNumElements = 1333;
+    const int kNumElements = 17;
     int64_t valuesSum = 0;
     int64_t keysSum = 0;
     for (int i = 0; i < kNumElements; i++)
@@ -164,9 +179,11 @@ TEST(SmFlatHashMap, IteratorTest)
 
     // default (key) iterator
     int64_t keysSumTest = 0;
+    int step = 0;
     for (const int& key : ht)
     {
         keysSumTest += key;
+        step++;
     }
     EXPECT_EQ(keysSum, keysSumTest);
 
@@ -229,7 +246,9 @@ namespace Excalibur
 {
 template <> struct KeyInfo<Bar>
 {
-    static inline Bar getEmpty() noexcept { return Bar{std::numeric_limits<int>::min()}; }
+    static inline bool isValid(const Bar& key) noexcept { return key.v < 0x7ffffffe; }
+    static inline Bar getTombstone() noexcept { return Bar{0x7fffffff}; }
+    static inline Bar getEmpty() noexcept { return Bar{0x7ffffffe}; }
     static inline uint64_t hash(const Bar& key) noexcept { return std::hash<int>{}(key.v); }
     static inline bool isEqual(const Bar& lhs, const Bar& rhs) noexcept { return lhs.v == rhs.v; }
 };

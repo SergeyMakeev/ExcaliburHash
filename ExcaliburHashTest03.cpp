@@ -3,14 +3,16 @@
 
 struct CustomStruct
 {
-    int v;
+    int v = 0;
 };
 
 namespace Excalibur
 {
 template <> struct KeyInfo<CustomStruct>
 {
-    static inline CustomStruct getEmpty() noexcept { return CustomStruct{2147483647}; }
+    static inline bool isValid(const CustomStruct& key) noexcept { return key.v < 0x7ffffffe; }
+    static inline CustomStruct getTombstone() noexcept { return CustomStruct{0x7fffffff}; }
+    static inline CustomStruct getEmpty() noexcept { return CustomStruct{0x7ffffffe}; }
     static inline uint64_t hash(const CustomStruct& /*key*/) noexcept
     {
         // Note: this is a very bad hash function
@@ -19,7 +21,6 @@ template <> struct KeyInfo<CustomStruct>
     }
     static inline bool isEqual(const CustomStruct& lhs, const CustomStruct& rhs) noexcept { return lhs.v == rhs.v; }
 };
-
 } // namespace Excalibur
 
 TEST(SmFlatHashMap, BadHashFunction)
@@ -62,6 +63,12 @@ namespace Excalibur
 {
 template <> struct KeyInfo<std::string>
 {
+    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
+    static inline std::string getTombstone() noexcept
+    {
+        // and let's hope that small string optimization will do the job
+        return std::string(1, char(1));
+    }
     static inline std::string getEmpty() noexcept { return std::string(); }
     static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
     static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
@@ -71,7 +78,6 @@ template <> struct KeyInfo<std::string>
 TEST(SmFlatHashMap, ComplexStruct)
 {
     {
-
         Excalibur::HashTable<std::string, std::string> ht;
 
         const char* keyStr = "Hello";
@@ -289,4 +295,61 @@ TEST(SmFlatHashMap, MoveTest)
 
     EXPECT_EQ(ht3.size(), uint32_t(1));
     EXPECT_NE(ht3.find(1), ht3.iend());
+}
+
+TEST(SmFlatHashMap, TryToEmplaceDuplicate)
+{
+    // note: CustomStruct intentionally has a very bad hash function that always returns 3
+    Excalibur::HashTable<CustomStruct, CustomStruct> ht;
+
+    // note i0 and i1 produces collision due to weak hash function
+    CustomStruct& i0 = ht[CustomStruct{0}];
+    EXPECT_EQ(i0.v, 0);
+    i0.v++;
+
+    CustomStruct& i1 = ht[CustomStruct{1}];
+    EXPECT_EQ(i1.v, 0);
+    i1.v++;
+
+    // erase i0
+    ht.erase(CustomStruct{0});
+
+    // check if we found the same i1 or not
+    CustomStruct& _i1 = ht[CustomStruct{1}];
+    EXPECT_EQ(i1.v, 1);
+    EXPECT_EQ(_i1.v, 1);
+
+    EXPECT_EQ(&_i1.v, &i1.v);
+}
+
+TEST(SmFlatHashMap, ReserveTest)
+{
+    Excalibur::HashTable<int, int> ht;
+    EXPECT_TRUE(ht.empty());
+    EXPECT_EQ(ht.capacity(), 0u);
+
+    ht.reserve(31);
+    EXPECT_TRUE(ht.empty());
+    EXPECT_EQ(ht.capacity(), 32u);
+
+    ht.reserve(32);
+    EXPECT_TRUE(ht.empty());
+    EXPECT_EQ(ht.capacity(), 32u);
+
+    ht.emplace(1, -1);
+    ht.emplace(9, -9);
+    EXPECT_EQ(ht.size(), 2u);
+    EXPECT_EQ(ht.capacity(), 32u);
+
+    ht.reserve(128);
+    EXPECT_EQ(ht.size(), 2u);
+    EXPECT_EQ(ht.capacity(), 128u);
+    EXPECT_TRUE(ht.has(1));
+    EXPECT_TRUE(ht.has(9));
+
+    ht.reserve(55);
+    EXPECT_EQ(ht.size(), 2u);
+    EXPECT_EQ(ht.capacity(), 128u);
+    EXPECT_TRUE(ht.has(1));
+    EXPECT_TRUE(ht.has(9));
 }

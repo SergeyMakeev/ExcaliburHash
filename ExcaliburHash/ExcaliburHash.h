@@ -1,69 +1,36 @@
 #pragma once
 
 #include <stdint.h>
-//#include <string>
-#include <algorithm> // min/max
+#include <algorithm>
 #include <type_traits>
 #include <utility>
 
-#if !defined(CHHT_ALLOC) || !defined(CHHT_FREE)
+#if !defined(EXLBR_ALLOC) || !defined(EXLBR_FREE)
     #if defined(_WIN32)
         // Windows
         #include <xmmintrin.h>
-        #define CHHT_ALLOC(sizeInBytes, alignment) _mm_malloc(sizeInBytes, alignment)
-        #define CHHT_FREE(ptr) _mm_free(ptr)
+        #define EXLBR_ALLOC(sizeInBytes, alignment) _mm_malloc(sizeInBytes, alignment)
+        #define EXLBR_FREE(ptr) _mm_free(ptr)
     #else
         // Posix
         #include <stdlib.h>
-        #define CHHT_ALLOC(sizeInBytes, alignment) aligned_alloc(alignment, sizeInBytes)
-        #define CHHT_FREE(ptr) free(ptr)
+        #define EXLBR_ALLOC(sizeInBytes, alignment) aligned_alloc(alignment, sizeInBytes)
+        #define EXLBR_FREE(ptr) free(ptr)
     #endif
 #endif
 
-#if !defined(CHHT_ASSERT)
+#if !defined(EXLBR_ASSERT)
     #include <assert.h>
-    #define CHHT_ASSERT(expression) assert(expression)
-/*
-    #define CHHT_ASSERT(expr)                                                                                                              \
-        do                                                                                                                                 \
-        {                                                                                                                                  \
-            if (!(expr))                                                                                                                   \
-                _CrtDbgBreak();                                                                                                            \
-        } while (0)
-*/
+    #define EXLBR_ASSERT(expression) assert(expression)
 #endif
 
-#if !defined(CHHT_RESTRICT)
-    #define CHHT_RESTRICT __restrict
+#if !defined(EXLBR_RESTRICT)
+    #define EXLBR_RESTRICT __restrict
 #endif
-
-//#define CHHT_USED_IN_ASSERT(x) (void)(x)
-
-/*
-
- http://graphics.stanford.edu/~seander/bithacks.html#IntegerLogDeBruijn
-
-const int tab32[32] = {
-     0,  9,  1, 10, 13, 21,  2, 29,
-    11, 14, 16, 18, 22, 25,  3, 30,
-     8, 12, 20, 28, 15, 17, 24,  7,
-    19, 27, 23,  6, 26,  5,  4, 31};
-
-int log2_32 (uint32_t value)
-{
-    value |= value >> 1;
-    value |= value >> 2;
-    value |= value >> 4;
-    value |= value >> 8;
-    value |= value >> 16;
-    return tab32[(uint32_t)(value*0x07C4ACDD) >> 27];
-}
-
-*/
 
 //
 //
-// KeyInfo for common types
+// KeyInfo for common types (TODO: move to separate header?)
 //
 //
 namespace Excalibur
@@ -72,24 +39,26 @@ namespace Excalibur
 // generic type (without implementation)
 template <typename T> struct KeyInfo
 {
-    static inline T getEmpty() noexcept;                /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
-    static inline uint64_t hash(const T& key) noexcept; /*{ static_assert(false, "Please provide a template specialization for type T"); }*/
-    static inline bool isEqual(const T& lhs, const T& rhs) noexcept; /*
-    {
-        static_assert(false, "Please provide a template specialization for type T");
-    }
-    */
+    //    static inline T getTombstone() noexcept;
+    //    static inline T getEmpty() noexcept;
+    //    static inline uint64_t hash(const T& key) noexcept;
+    //    static inline bool isEqual(const T& lhs, const T& rhs) noexcept;
+    //    static inline bool isValid(const T& key) noexcept;
 };
 
 template <> struct KeyInfo<int>
 {
-    static inline int getEmpty() noexcept { return 0x7fffffff; }
+    static inline bool isValid(const int& key) noexcept { return key < 0x7ffffffe; }
+    static inline int getTombstone() noexcept { return 0x7fffffff; }
+    static inline int getEmpty() noexcept { return 0x7ffffffe; }
     static inline uint64_t hash(const int& key) noexcept { return key; }
     static inline bool isEqual(const int& lhs, const int& rhs) noexcept { return lhs == rhs; }
 };
 
 template <> struct KeyInfo<uint32_t>
 {
+    static inline bool isValid(const uint32_t& key) noexcept { return key < 0xfffffffe; }
+    static inline uint32_t getTombstone() noexcept { return 0xfffffffe; }
     static inline uint32_t getEmpty() noexcept { return 0xffffffff; }
     static inline uint64_t hash(const uint32_t& key) noexcept { return key; }
     static inline bool isEqual(const uint32_t& lhs, const uint32_t& rhs) noexcept { return lhs == rhs; }
@@ -98,6 +67,12 @@ template <> struct KeyInfo<uint32_t>
 /*
 template <> struct KeyInfo<std::string>
 {
+    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
+    static inline std::string getTombstone() noexcept
+    {
+        // and let's hope that small string optimization will do the job
+        return std::string(1, char(1));
+    }
     static inline std::string getEmpty() noexcept { return std::string(); }
     static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
     static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
@@ -122,20 +97,7 @@ TODO: Memory layout
 */
 template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> class HashTable
 {
-    using KeyStorage = typename std::aligned_storage<sizeof(TKey), alignof(TKey)>::type;
-    using ValueStorage = typename std::aligned_storage<sizeof(TValue), alignof(TValue)>::type;
-
-    static inline constexpr uint32_t kMinNumberOfChunks = 2;
-    static inline constexpr uint64_t kNumElementsInChunk = 16;
-
-    struct ItemAddr
-    {
-        // chunk index (upper 56 bits)
-        size_t chunk;
-
-        // index within chunk (lower 6 bits) (TODO: use smaller data type?)
-        size_t subIndex;
-    };
+    static inline constexpr uint32_t k_MinNumberOfBuckets = 16;
 
     template <typename T> static inline T shr(T v, T shift) noexcept
     {
@@ -143,41 +105,28 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (v >> shift);
     }
 
-    /*
-
-    convert hash value to entry point address (chunk + slot)
-
-    */
-    static inline ItemAddr hashToEntryPointAddress(uint64_t hashValue, size_t chunkMod) noexcept
+    inline uint32_t nextPow2(uint32_t v)
     {
-        CHHT_ASSERT(chunkMod > 0);
-        const size_t subIndex = size_t(hashValue % kNumElementsInChunk);
-        const size_t chunk = (size_t(hashValue / kNumElementsInChunk) & chunkMod);
-        return {chunk, subIndex};
+        EXLBR_ASSERT(v != 0);
+        v--;
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
+        v++;
+        return v;
     }
 
-    struct Chunk
+    struct has_values : std::bool_constant<!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value>
     {
-        union
-        {
-            struct
-            {
-                uint16_t numEntries;
-                uint16_t maxProbeLength;
-            } meta;
-            struct
-            {
-                uint32_t meta;
-            } fc;
-        } header;
-        KeyStorage keys[kNumElementsInChunk];
     };
 
-    template <typename T, class... Args> static void construct(void* CHHT_RESTRICT ptr, Args&&... args)
+    template <typename T, class... Args> static void construct(void* EXLBR_RESTRICT ptr, Args&&... args)
     {
         new (ptr) T(std::forward<Args>(args)...);
     }
-    template <typename T> void destruct(T* CHHT_RESTRICT ptr) { ptr->~T(); }
+    template <typename T> void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
 
     [[nodiscard]] static inline size_t align(size_t cursor, size_t alignment) noexcept
     {
@@ -190,248 +139,190 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     template <typename TIterator> struct IteratorHelper
     {
-        static TIterator begin(const HashTable& ht) noexcept
+        [[nodiscard]] static TIterator begin(const HashTable& ht) noexcept
         {
             if (ht.empty())
             {
                 return end(ht);
             }
 
-            Chunk* const CHHT_RESTRICT lastValidChunk = ht.lastChunk;
-            Chunk* CHHT_RESTRICT chunk = &ht.chunksStorage[0];
-            size_t firstValidIndex = 0;
-            for (; chunk <= lastValidChunk; chunk++)
+            const uint32_t numBuckets = ht.m_numBuckets;
+            TValue* EXLBR_RESTRICT value = ht.m_valuesStorage;
+            TKey* EXLBR_RESTRICT key = ht.m_keysStorage;
+            while (true)
             {
-                TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-                TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
-                for (; itemKey < endItemKey; itemKey++, firstValidIndex++)
+                if (TKeyInfo::isValid(*key))
                 {
-                    if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
-                    {
-                        size_t chunkIndex = firstValidIndex / size_t(kNumElementsInChunk);
-                        size_t chunkSubIndex = firstValidIndex % size_t(kNumElementsInChunk);
-
-                        const uint64_t hashValue = TKeyInfo::hash(*itemKey);
-                        const ItemAddr addr = hashToEntryPointAddress(hashValue, (ht.numChunks - 1));
-                        return TIterator(&ht, chunkIndex, chunkSubIndex, addr.chunk);
-                    }
+                    return TIterator(&ht, key, value);
                 }
+                key++;
+                value++;
             }
-            // hash table is not empty, but there is no entry point found? this should never happen
-            CHHT_ASSERT(false);
-            return end(ht);
         }
 
-        static TIterator end(const HashTable& ht) noexcept { return TIterator(&ht, ht.numChunks, 0, 0); }
+        [[nodiscard]] static TIterator end(const HashTable& ht) noexcept
+        {
+            const uint32_t numBuckets = ht.m_numBuckets;
+            TKey* const endKey = ht.m_keysStorage + numBuckets;
+            TValue* const endValue = ht.m_valuesStorage + numBuckets;
+            return TIterator(&ht, endKey, endValue);
+        }
     };
 
     template <typename THashTableSrc, typename THashTableDst> static inline void copyOrMoveTo(THashTableDst&& dst, THashTableSrc&& src)
     {
+        EXLBR_ASSERT(dst.empty());
         if (src.empty())
         {
             return;
         }
-
-        const uint32_t numBuckets = src.numChunks * kNumElementsInChunk;
-
-        Chunk* CHHT_RESTRICT chunk = &src.chunksStorage[0];
-        for (size_t globalIndex = 0; globalIndex < numBuckets;)
+        const uint32_t numBuckets = src.m_numBuckets;
+        TValue* EXLBR_RESTRICT value = src.m_valuesStorage;
+        TKey* EXLBR_RESTRICT key = src.m_keysStorage;
+        TKey* const endKey = key + numBuckets;
+        for (; key != endKey; key++, value++)
         {
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-            for (size_t subIndex = 0; subIndex < kNumElementsInChunk; subIndex++, globalIndex++, itemKey++)
+            if (TKeyInfo::isValid(*key))
             {
-                if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
+                if constexpr (has_values::value)
                 {
-                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-                    {
-                        TValue* itemValue = reinterpret_cast<TValue*>(&src.valuesStorage[globalIndex]);
-                        dst.emplace(std::move(*itemKey), std::move(*itemValue));
-                    }
-                    else
-                    {
-                        dst.emplace(std::move(*itemKey));
-                    }
+                    dst.emplace(std::move(*key), std::move(*value));
+                }
+                else
+                {
+                    dst.emplace(std::move(*key));
                 }
             }
-            chunk++;
         }
+        EXLBR_ASSERT(dst.size() == src.size());
     }
 
     inline void rehash()
     {
-        uint32_t newNumChunks = numChunks * 2;
-        HashTable newHash(newNumChunks);
+        uint32_t numBucketsNew = m_numBuckets * 2;
+        HashTable newHash(numBucketsNew);
         copyOrMoveTo(newHash, std::move(*this));
         swap(newHash);
     }
 
-    inline void rehash_if_need()
+    inline void allocateInline()
     {
-        const uint32_t _numBuckets = capacity();
-        // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
-        const uint32_t _numBucketsDiv2 = shr(_numBuckets, 1u);
-        const uint32_t _numBucketsDiv4 = shr(_numBuckets, 2u);
-        const uint32_t numBucketsThreshold = _numBucketsDiv2 + _numBucketsDiv4;
-        const bool reshashBecauseLoadFactorIsTooHigh = (numElements >= numBucketsThreshold);
-        if (reshashBecauseLoadFactorIsTooHigh)
+        TKey* inlineKey = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
+        construct<TKey>(inlineKey, TKeyInfo::getEmpty());
+        m_keysStorage = inlineKey;
+    }
+
+    inline void destroyInline()
+    {
+        if constexpr (!std::is_trivially_destructible<TKey>::value)
         {
-            rehash();
+            TKey* inlineKey = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
+            destruct(inlineKey);
         }
     }
 
-    inline void create(uint32_t _numChunks)
+    inline void create(uint32_t numBuckets)
     {
-        _numChunks = (_numChunks < kMinNumberOfChunks) ? kMinNumberOfChunks : _numChunks;
+        allocateInline();
+
+        numBuckets = (numBuckets < k_MinNumberOfBuckets) ? k_MinNumberOfBuckets : numBuckets;
 
         // numBuckets has to be power-of-two
-        CHHT_ASSERT(_numChunks > 0);
-        CHHT_ASSERT((_numChunks & (_numChunks - 1)) == 0);
+        EXLBR_ASSERT(numBuckets > 0);
+        EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
 
-        size_t numBytesKeys = _numChunks * sizeof(Chunk);
-        size_t numBytesKeysAligned = align(numBytesKeys, alignof(ValueStorage));
+        size_t numBytesKeys = numBuckets * sizeof(TKey);
+        size_t numBytesKeysAligned = align(numBytesKeys, alignof(TValue));
 
-        size_t alignment = alignof(Chunk);
+        size_t alignment = alignof(TKey);
         size_t numBytesValues = 0;
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+        if constexpr (has_values::value)
         {
-            numBytesValues = _numChunks * sizeof(ValueStorage) * kNumElementsInChunk;
-            alignment = std::max(alignment, alignof(ValueStorage));
+            numBytesValues = numBuckets * sizeof(TValue);
+            alignment = std::max(alignment, alignof(TValue));
         }
 
-        alignment = std::max(alignment, size_t(16));
+        alignment = std::max(alignment, size_t(64)); // note: 64 to match CPU cache line size
         size_t numBytesTotal = numBytesKeysAligned + numBytesValues;
         numBytesTotal = align(numBytesTotal, alignment);
 
-        CHHT_ASSERT((numBytesTotal % alignment) == 0);
+        EXLBR_ASSERT((numBytesTotal % alignment) == 0);
 
-        void* raw = CHHT_ALLOC(numBytesTotal, alignment);
-        CHHT_ASSERT(raw);
-        chunksStorage = (Chunk*)raw;
-        CHHT_ASSERT(raw == chunksStorage);
-        CHHT_ASSERT(chunksStorage);
-        CHHT_ASSERT(isPointerAligned(chunksStorage, alignof(Chunk)));
+        void* raw = EXLBR_ALLOC(numBytesTotal, alignment);
+        EXLBR_ASSERT(raw);
+        m_keysStorage = reinterpret_cast<TKey*>(raw);
+        EXLBR_ASSERT(raw == m_keysStorage);
+        EXLBR_ASSERT(isPointerAligned(m_keysStorage, alignof(TKey)));
 
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+        if constexpr (has_values::value)
         {
-            valuesStorage = (ValueStorage*)(reinterpret_cast<char*>(raw) + numBytesKeysAligned);
-            CHHT_ASSERT(valuesStorage);
-            CHHT_ASSERT(isPointerAligned(valuesStorage, alignof(ValueStorage)));
+            m_valuesStorage = reinterpret_cast<TValue*>((reinterpret_cast<char*>(raw) + numBytesKeysAligned));
+            EXLBR_ASSERT(m_valuesStorage);
+            EXLBR_ASSERT(isPointerAligned(m_valuesStorage, alignof(TValue)));
         }
         else
         {
-            valuesStorage = nullptr;
+            m_valuesStorage = nullptr;
         }
 
-        CHHT_ASSERT(_numChunks > 0);
-        numChunks = _numChunks;
-        numElements = 0;
+        m_numBuckets = numBuckets;
+        m_numElements = 0;
 
-        lastChunk = &chunksStorage[_numChunks - 1];
-
-        // initialize keys
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-
-        for (; chunk <= lastValidChunk; chunk++)
+        TKey* EXLBR_RESTRICT key = m_keysStorage;
+        TKey* const endKey = key + numBuckets;
+        for (; key != endKey; key++)
         {
-            chunk->header.fc.meta = 0;
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-            for (size_t i = 0; i < kNumElementsInChunk; i++, itemKey++)
-            {
-                // fill with empty keys
-                if constexpr (std::is_trivially_constructible<TKey>::value)
-                {
-                    *itemKey = TKeyInfo::getEmpty();
-                }
-                else
-                {
-                    construct<TKey>(itemKey, TKeyInfo::getEmpty());
-                }
-            }
+            construct<TKey>(key, TKeyInfo::getEmpty());
         }
     }
 
     inline void destroy()
     {
-        if (empty())
+        const uint32_t numBuckets = m_numBuckets;
+        TValue* EXLBR_RESTRICT value = m_valuesStorage;
+        TKey* EXLBR_RESTRICT key = m_keysStorage;
+        TKey* const endKey = key + numBuckets;
+        for (; key != endKey; key++, value++)
         {
-            return;
-        }
-
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
-
-        TValue* CHHT_RESTRICT itemValue = nullptr;
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-        {
-            itemValue = reinterpret_cast<TValue*>(&valuesStorage[0]);
-        }
-
-        for (; chunk <= lastValidChunk; chunk++)
-        {
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-            TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
-            for (; itemKey < endItemKey; itemValue++, itemKey++)
+            if (TKeyInfo::isValid(*key))
             {
-                if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                              (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
+                // destroy value
+                if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
                 {
-                    if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
-                    {
-                        destruct(itemValue);
-                    }
+                    destruct(value);
                 }
+            }
 
-                if constexpr (!std::is_trivially_destructible<TKey>::value)
-                {
-                    destruct(itemKey);
-                }
+            if constexpr (!std::is_trivially_destructible<TKey>::value)
+            {
+                destruct(key);
             }
         }
     }
 
-    template <typename TIteratorType> inline TIteratorType findImpl(const TKey& key) const noexcept
+    [[nodiscard]] inline TKey* findImpl(const TKey& key) const noexcept
     {
-        CHHT_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
-        if (empty())
-        {
-            return IteratorHelper<TIteratorType>::end(*this);
-        }
-
-        CHHT_ASSERT(numChunks > 0);
-
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
+        const uint32_t numBuckets = m_numBuckets;
+        TKey* const firstKey = m_keysStorage;
+        TKey* const endKey = firstKey + numBuckets;
         const uint64_t hashValue = TKeyInfo::hash(key);
-        const ItemAddr addr = hashToEntryPointAddress(hashValue, (numChunks - 1));
-        size_t chunkSubIndex = addr.subIndex;
-        size_t chunkIndex = addr.chunk;
-
-        CHHT_ASSERT(chunkIndex < numChunks);
-        Chunk* CHHT_RESTRICT entryChunk = &chunksStorage[chunkIndex];
-        Chunk* CHHT_RESTRICT chunk = entryChunk;
-
-        const size_t maxProbeLength = entryChunk->header.meta.maxProbeLength;
-        const size_t _numChunks = numChunks;
-
-        for (size_t probe = 0;;)
+        uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
+        TKey* EXLBR_RESTRICT currentKey = firstKey + bucketIndex;
+        while (true)
         {
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[chunkSubIndex]);
-            for (; chunkSubIndex < kNumElementsInChunk; chunkSubIndex++, probe++, itemKey++)
+            if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *currentKey))
             {
-                if (TKeyInfo::isEqual(key, *itemKey))
-                {
-                    return TIteratorType(this, chunkIndex, chunkSubIndex, addr.chunk);
-                }
-
-                if (probe > maxProbeLength)
-                {
-                    return IteratorHelper<TIteratorType>::end(*this);
-                }
+                return endKey;
             }
-            chunkSubIndex = 0;
-            chunkIndex++;
-            chunkIndex = (chunkIndex == _numChunks) ? 0 : chunkIndex;
-            CHHT_ASSERT(chunkIndex < numChunks);
-            chunk = &chunksStorage[chunkIndex];
+
+            if (TKeyInfo::isEqual(key, *currentKey))
+            {
+                return currentKey;
+            }
+            currentKey++;
+            currentKey = (currentKey == endKey) ? firstKey : currentKey;
         }
     }
 
@@ -441,55 +332,66 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     class IteratorBase
     {
       protected:
-        inline const TValue* getValue() const noexcept
+        [[nodiscard]] inline const TValue* getValue() const noexcept
         {
-            size_t index = size_t(chunkIndex * size_t(kNumElementsInChunk) + chunkSubIndex);
-            TValue* itemValue = reinterpret_cast<TValue*>(&ht->valuesStorage[index]);
-            return itemValue;
+            EXLBR_ASSERT(m_value >= m_ht->m_valuesStorage && m_value <= m_ht->m_valuesStorage + m_ht->m_numBuckets);
+            return m_value;
         }
-
-        inline const TKey* getKey() const noexcept
+        [[nodiscard]] inline const TKey* getKey() const noexcept
         {
-            CHHT_ASSERT(&ht->chunksStorage[chunkIndex] <= ht->lastChunk);
-            CHHT_ASSERT(chunkSubIndex < kNumElementsInChunk);
-            return reinterpret_cast<TKey*>(&ht->chunksStorage[chunkIndex].keys[chunkSubIndex]);
+            EXLBR_ASSERT(m_key >= m_ht->m_keysStorage && m_key <= m_ht->m_keysStorage + m_ht->m_numBuckets);
+            EXLBR_ASSERT(TKeyInfo::isValid(*m_key));
+            return m_key;
         }
 
       public:
         IteratorBase() = delete;
 
-        IteratorBase(const HashTable* _ht, size_t _chunkIndex, size_t _chunkSubIndex, size_t _entryChunkIndex) noexcept
-            : ht(_ht)
-            , chunkIndex(_chunkIndex)
-            , chunkSubIndex(_chunkSubIndex)
-            , entryChunkIndex(_entryChunkIndex)
+        IteratorBase(const HashTable* ht, TKey* key, TValue* value) noexcept
+            : m_ht(ht)
         {
+            EXLBR_ASSERT(key >= ht->m_keysStorage && key <= ht->m_keysStorage + ht->m_numBuckets);
+            EXLBR_ASSERT(value == nullptr || (ht->m_valuesStorage + size_t(key - ht->m_keysStorage)) == value);
+            m_key = key;
+            m_value = value;
+        }
+
+        IteratorBase(const HashTable* ht, TKey* key) noexcept
+            : m_ht(ht)
+        {
+            TKey* const firstKey = ht->m_keysStorage;
+            TKey* const endKey = firstKey + ht->m_numBuckets;
+            EXLBR_ASSERT(key >= firstKey && key <= endKey);
+            const size_t index = size_t(key - firstKey);
+            EXLBR_ASSERT(firstKey + index == key);
+            m_key = key;
+            m_value = m_ht->m_valuesStorage + index;
         }
 
         bool operator==(const IteratorBase& other) const noexcept
         {
-            /* note: we intentionally skip the following check (entryChunkIndex == other.entryChunkIndex) */
-            return ht == other.ht && chunkIndex == other.chunkIndex && chunkSubIndex == other.chunkSubIndex;
+            // note: m_ht comparison is redundant and hence skipped
+            return m_key == other.m_key && m_value == other.m_value;
         }
         bool operator!=(const IteratorBase& other) const noexcept
         {
-            /* note: we intentionally skip the following check (entryChunkIndex != other.entryChunkIndex) */
-            return ht != other.ht || chunkIndex != other.chunkIndex || chunkSubIndex != other.chunkSubIndex;
+            // note: m_ht comparison is redundant and hence skipped
+            return m_key != other.m_key || m_value != other.m_value;
         }
 
         IteratorBase& operator++() noexcept
         {
-            size_t _numChunks = ht->numChunks;
+            TKey* endKey = m_ht->m_keysStorage + m_ht->m_numBuckets;
+            TKey* EXLBR_RESTRICT key = m_key;
+            TValue* EXLBR_RESTRICT value = m_value;
             do
             {
-                chunkSubIndex++;
-                if (chunkSubIndex >= kNumElementsInChunk)
-                {
-                    chunkIndex++;
-                    chunkSubIndex = 0;
-                }
-            } while (chunkIndex < _numChunks && TKeyInfo::isEqual(TKeyInfo::getEmpty(), *getKey()));
+                key++;
+                value++;
+            } while (key < endKey && !TKeyInfo::isValid(*key));
 
+            m_key = key;
+            m_value = value;
             return *this;
         }
 
@@ -501,11 +403,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
 
       protected:
-        const HashTable* ht;
-        size_t chunkIndex;
-        size_t chunkSubIndex;
-        size_t entryChunkIndex;
-
+        const HashTable* m_ht;
+        TKey* m_key;
+        TValue* m_value;
         friend class HashTable<TKey, TValue, TKeyInfo>;
     };
 
@@ -514,13 +414,18 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         IteratorK() = delete;
 
-        IteratorK(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
+        IteratorK(const HashTable* ht, TKey* key, TValue* value) noexcept
+            : IteratorBase(ht, key, value)
         {
         }
 
-        inline const TKey& operator*() const noexcept { return *IteratorBase::getKey(); }
-        inline const TKey* operator->() const noexcept { return IteratorBase::getKey(); }
+        IteratorK(const HashTable* ht, TKey* key) noexcept
+            : IteratorBase(ht, key)
+        {
+        }
+
+        [[nodiscard]] inline const TKey& operator*() const noexcept { return *IteratorBase::getKey(); }
+        [[nodiscard]] inline const TKey* operator->() const noexcept { return IteratorBase::getKey(); }
     };
 
     template <typename TIteratorValue> class TIteratorV : public IteratorBase
@@ -528,13 +433,18 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorV() = delete;
 
-        TIteratorV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
+        TIteratorV(const HashTable* ht, TKey* key, TValue* value) noexcept
+            : IteratorBase(ht, key, value)
         {
         }
 
-        inline TIteratorValue& operator*() const noexcept { return *const_cast<TIteratorValue*>(IteratorBase::getValue()); }
-        inline TIteratorValue* operator->() const noexcept { return const_cast<TIteratorValue*>(IteratorBase::getValue()); }
+        TIteratorV(const HashTable* ht, TKey* key) noexcept
+            : IteratorBase(ht, key)
+        {
+        }
+
+        [[nodiscard]] inline TIteratorValue& operator*() const noexcept { return *const_cast<TIteratorValue*>(IteratorBase::getValue()); }
+        [[nodiscard]] inline TIteratorValue* operator->() const noexcept { return const_cast<TIteratorValue*>(IteratorBase::getValue()); }
     };
 
     template <typename TIteratorValue> class TIteratorKV : public IteratorBase
@@ -550,16 +460,14 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             {
             }
 
-            reference(const reference& /*other*/) noexcept = default;
-            reference(reference&& /*other*/) noexcept = default;
-            reference& operator=(const reference& /*other*/) noexcept = default;
-            reference& operator=(reference&& /*other*/) noexcept = default;
-
+            reference(const reference&) noexcept = default;
+            reference(reference&&) noexcept = default;
+            reference& operator=(const reference&) noexcept = default;
+            reference& operator=(reference&&) noexcept = default;
             void set(TYPE* _ptr) noexcept { ptr = _ptr; }
-
             TYPE& get() const noexcept
             {
-                CHHT_ASSERT(ptr);
+                EXLBR_ASSERT(ptr);
                 return *ptr;
             }
 
@@ -580,22 +488,27 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorKV() = delete;
 
-        TIteratorKV(const HashTable* ht, size_t chunkIndex, size_t chunkSubIndex, size_t entryChunkIndex) noexcept
-            : IteratorBase(ht, chunkIndex, chunkSubIndex, entryChunkIndex)
+        TIteratorKV(const HashTable* ht, TKey* key, TValue* value) noexcept
+            : IteratorBase(ht, key, value)
             , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
         {
         }
 
-        inline const TKey& key() const noexcept { return *IteratorBase::getKey(); }
-        inline TIteratorValue& value() const noexcept { return *const_cast<TIteratorValue*>(IteratorBase::getValue()); }
+        TIteratorKV(const HashTable* ht, TKey* key) noexcept
+            : IteratorBase(ht, key)
+            , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
+        {
+        }
 
-        inline KeyValue& operator*() const noexcept
+        [[nodiscard]] inline const TKey& key() const noexcept { return *IteratorBase::getKey(); }
+        [[nodiscard]] inline TIteratorValue& value() const noexcept { return *const_cast<TIteratorValue*>(IteratorBase::getValue()); }
+        [[nodiscard]] inline KeyValue& operator*() const noexcept
         {
             updateTmpKV();
             return tmpKv;
         }
 
-        inline KeyValue* operator->() const noexcept
+        [[nodiscard]] inline KeyValue* operator->() const noexcept
         {
             updateTmpKV();
             return &tmpKv;
@@ -611,35 +524,41 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     using ConstIteratorV = TIteratorV<const TValue>;
 
     HashTable() noexcept
-        : chunksStorage(nullptr)
-        , lastChunk(nullptr)
-        , valuesStorage(nullptr)
-        , numChunks(0)
-        , numElements(0)
+        : m_valuesStorage(nullptr)
+        , m_numBuckets(1)
+        , m_numElements(0)
     {
+        allocateInline();
     }
 
     ~HashTable()
     {
-        if constexpr (!std::is_trivially_destructible<TValue>::value || !std::is_trivially_destructible<TKey>::value)
+        const TKey* inlineKeyStorage = reinterpret_cast<const TKey*>(&m_inlineKeysStorage);
+        if (inlineKeyStorage != m_keysStorage)
         {
-            destroy();
+            if constexpr (!std::is_trivially_destructible<TValue>::value || !std::is_trivially_destructible<TKey>::value)
+            {
+                destroy();
+            }
+            EXLBR_FREE(m_keysStorage);
         }
-
-        // it looks like calling `free(nullptr)` could be quite expensive for some memory allocators
-        if (chunksStorage)
-        {
-            CHHT_FREE(chunksStorage);
-        }
+        destroyInline();
     }
 
     inline void swap(HashTable& other) noexcept
     {
-        std::swap(chunksStorage, other.chunksStorage);
-        std::swap(lastChunk, other.lastChunk);
-        std::swap(valuesStorage, other.valuesStorage);
-        std::swap(numChunks, other.numChunks);
-        std::swap(numElements, other.numElements);
+        // note: due to using inline keyStorage this logic is a bit more complex than simple
+        // std::swap(m_keysStorage, other.m_keysStorage)
+        TKey* inlineKeyStorage = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
+        TKey* otherInlineKeyStorage = reinterpret_cast<TKey*>(&other.m_inlineKeysStorage);
+        TKey* keysStorage = m_keysStorage;
+        TKey* otherKeysStorage = other.m_keysStorage;
+        m_keysStorage = (otherKeysStorage == otherInlineKeyStorage) ? inlineKeyStorage : otherKeysStorage;
+        other.m_keysStorage = (keysStorage == inlineKeyStorage) ? otherInlineKeyStorage : keysStorage;
+
+        std::swap(m_valuesStorage, other.m_valuesStorage);
+        std::swap(m_numBuckets, other.m_numBuckets);
+        std::swap(m_numElements, other.m_numElements);
     }
 
     inline void clear()
@@ -649,125 +568,93 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return;
         }
 
-        Chunk* const CHHT_RESTRICT lastValidChunk = lastChunk;
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[0];
-        TValue* CHHT_RESTRICT itemValue = nullptr;
-        if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
+        const uint32_t numBuckets = m_numBuckets;
+        TValue* EXLBR_RESTRICT value = m_valuesStorage;
+        TKey* EXLBR_RESTRICT key = m_keysStorage;
+        TKey* const endKey = key + numBuckets;
+        for (; key != endKey; key++, value++)
         {
-            itemValue = reinterpret_cast<TValue*>(&valuesStorage[0]);
-        }
-
-        for (; chunk <= lastValidChunk; chunk++)
-        {
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[0]);
-            TKey* CHHT_RESTRICT endItemKey = reinterpret_cast<TKey*>(&chunk->keys[kNumElementsInChunk]);
-            chunk->header.fc.meta = 0;
-            for (; itemKey < endItemKey; itemValue++, itemKey++)
+            if (TKeyInfo::isValid(*key))
             {
-                if (!TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
+                // destroy value
+                if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
                 {
-                    // destroy value
-                    if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                                  (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
-                    {
-                        destruct(itemValue);
-                    }
-
-                    // overwrite key with empty key
-                    *itemKey = TKeyInfo::getEmpty();
+                    destruct(value);
                 }
+
+                // overwrite key with empty key
+                *key = TKeyInfo::getEmpty();
             }
         }
-
         // TODO: shrink if needed?
-        numElements = 0;
+        m_numElements = 0;
     }
 
-    template <typename TK, class... Args> inline std::pair<TValue*, bool> emplace(TK&& key, Args&&... args)
+    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace(TK&& key, Args&&... args)
     {
         static_assert(std::is_same<TKey, typename std::remove_const<typename std::remove_reference<TK>::type>::type>::value,
                       "Expected unversal reference of TKey type");
 
-        CHHT_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
+        uint32_t numBuckets = m_numBuckets;
 
-        rehash_if_need();
-
-        CHHT_ASSERT(numChunks > 0);
-
-        const uint64_t hashValue = TKeyInfo::hash(key);
-        const size_t maxProbeLength = 0xffff; // due to use of uint16_t in chunk header probe length cannot be greater that 65535
-        const size_t _numChunks = numChunks;
-
-        const ItemAddr addr = hashToEntryPointAddress(hashValue, (numChunks - 1));
-        size_t chunkSubIndex = addr.subIndex;
-        size_t chunkIndex = addr.chunk;
-
-        CHHT_ASSERT(chunkIndex < numChunks);
-        Chunk* CHHT_RESTRICT entryChunk = &chunksStorage[chunkIndex];
-        Chunk* CHHT_RESTRICT chunk = entryChunk;
-
-        for (size_t probe = 0;;)
+        // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
+        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
+        if (m_numElements >= numBucketsThreshold)
         {
-            TKey* CHHT_RESTRICT itemKey = reinterpret_cast<TKey*>(&chunk->keys[chunkSubIndex]);
+            rehash();
+            numBuckets = m_numBuckets;
+        }
 
-            // TODO: Perf
-            // I don't need chunkSubIndex at all, I could use for(; itemKey < lastItemKeyInChunk; itemKey++) instead
-            for (; chunkSubIndex < kNumElementsInChunk; chunkSubIndex++, probe++, itemKey++)
+        // numBuckets has to be power-of-two
+        EXLBR_ASSERT(numBuckets > 0);
+        EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
+        const uint64_t hashValue = TKeyInfo::hash(key);
+        const uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
+        TKey* const firstKey = m_keysStorage;
+        TKey* const endKey = firstKey + numBuckets;
+        TKey* EXLBR_RESTRICT currentKey = firstKey + bucketIndex;
+        TKey* insertKey = nullptr;
+
+        while (true)
+        {
+            if (TKeyInfo::isEqual(key, *currentKey))
             {
-                CHHT_ASSERT(probe < 0xffff);
-                if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *itemKey))
-                {
-                    *itemKey = std::move(key);
-                    numElements++;
-                    entryChunk->header.meta.numEntries++;
-                    uint16_t maxProbes = chunk->header.meta.maxProbeLength;
-                    entryChunk->header.meta.maxProbeLength = std::max(maxProbes, uint16_t(probe));
-
-                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-                    {
-                        size_t itemIndex = (chunkIndex * kNumElementsInChunk + chunkSubIndex);
-                        CHHT_ASSERT(itemIndex < capacity());
-                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[itemIndex]);
-                        construct<TValue>(itemValue, std::forward<Args>(args)...);
-                        return {{itemValue}, true};
-                    }
-                    else
-                    {
-                        return {{nullptr}, true};
-                    }
-                }
-
-                if (TKeyInfo::isEqual(key, *itemKey))
-                {
-                    if constexpr (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value)
-                    {
-                        size_t itemIndex = (chunkIndex * kNumElementsInChunk + chunkSubIndex);
-                        CHHT_ASSERT(itemIndex < capacity());
-                        TValue* itemValue = reinterpret_cast<TValue*>(&valuesStorage[itemIndex]);
-                        return {{itemValue}, false};
-                    }
-                    else
-                    {
-                        return {{nullptr}, false};
-                    }
-                }
-
-                if (probe > maxProbeLength)
-                {
-                    CHHT_ASSERT(false);
-                    return {{nullptr}, false};
-                }
+                return std::make_pair(IteratorKV(this, currentKey), false);
             }
-            chunkSubIndex = 0;
-            chunkIndex++;
-            chunkIndex = (chunkIndex == _numChunks) ? 0 : chunkIndex;
-            CHHT_ASSERT(chunkIndex < numChunks);
-            chunk = &chunksStorage[chunkIndex];
+            if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *currentKey))
+            {
+                insertKey = ((insertKey == nullptr) ? currentKey : insertKey);
+                *insertKey = std::move(key);
+                size_t index = size_t(insertKey - firstKey);
+                TValue* value = m_valuesStorage + index;
+                if constexpr (has_values::value)
+                {
+                    construct<TValue>(value, std::forward<Args>(args)...);
+                }
+                m_numElements++;
+                return std::make_pair(IteratorKV(this, insertKey, value), true);
+            }
+            if (TKeyInfo::isEqual(TKeyInfo::getTombstone(), *currentKey) && insertKey == nullptr)
+            {
+                insertKey = currentKey;
+            }
+            currentKey++;
+            currentKey = (currentKey == endKey) ? firstKey : currentKey;
         }
     }
 
-    inline ConstIteratorKV find(const TKey& key) const noexcept { return findImpl<ConstIteratorKV>(key); }
-    inline IteratorKV find(const TKey& key) noexcept { return findImpl<IteratorKV>(key); }
+    inline ConstIteratorKV find(const TKey& key) const noexcept
+    {
+        TKey* keyBucket = findImpl(key);
+        return ConstIteratorKV(this, keyBucket);
+    }
+    inline IteratorKV find(const TKey& key) noexcept
+    {
+        TKey* keyBucket = findImpl(key);
+        return IteratorKV(this, keyBucket);
+    }
 
     inline bool erase(const IteratorBase it)
     {
@@ -776,21 +663,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return false;
         }
 
-        CHHT_ASSERT(numElements != 0);
-        numElements--;
+        EXLBR_ASSERT(m_numElements != 0);
+        m_numElements--;
 
-        Chunk* CHHT_RESTRICT chunk = &chunksStorage[it.entryChunkIndex];
-        uint16_t numEntries = chunk->header.meta.numEntries;
-        CHHT_ASSERT(numEntries != 0);
-        numEntries--;
-        if (numEntries == 0)
-        {
-            chunk->header.meta.maxProbeLength = 0;
-        }
-        chunk->header.meta.numEntries = numEntries;
-
-        if constexpr ((!std::is_trivially_destructible<TValue>::value) &&
-                      (!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value))
+        if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
         {
             TValue* itemValue = const_cast<TValue*>(it.getValue());
             destruct(itemValue);
@@ -798,18 +674,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // overwrite key with empty key
         TKey* itemKey = const_cast<TKey*>(it.getKey());
-        *itemKey = TKeyInfo::getEmpty();
-
+        *itemKey = TKeyInfo::getTombstone();
         return true;
     }
-
-    inline uint32_t size() const noexcept { return numElements; }
-
-    inline uint32_t capacity() const noexcept { return (numChunks * kNumElementsInChunk); }
-
-    inline bool empty() const noexcept { return (numElements == 0); }
-
-    inline bool has(const TKey& key) const noexcept { return (find(key) != iend()); }
 
     inline bool erase(const TKey& key)
     {
@@ -817,24 +684,43 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return erase(it);
     }
 
-    inline TValue& operator[](const TKey& key)
+    inline bool reserve(uint32_t numBuckets)
     {
-        auto it = emplace(key);
-        return *it.first;
+        if (numBuckets == 0 || numBuckets < capacity())
+        {
+            return false;
+        }
+        numBuckets = nextPow2(numBuckets);
+        HashTable newHash(numBuckets);
+        copyOrMoveTo(newHash, std::move(*this));
+        swap(newHash);
+        return true;
     }
 
-    IteratorK begin() const { return IteratorHelper<IteratorK>::begin(*this); }
-    IteratorK end() const { return IteratorHelper<IteratorK>::end(*this); }
+    [[nodiscard]] inline uint32_t size() const noexcept { return m_numElements; }
+    [[nodiscard]] inline uint32_t capacity() const noexcept { return (m_numBuckets < k_MinNumberOfBuckets) ? 0 : m_numBuckets; }
+    [[nodiscard]] inline bool empty() const noexcept { return (m_numElements == 0); }
 
-    ConstIteratorV vbegin() const { return IteratorHelper<ConstIteratorV>::begin(*this); }
-    ConstIteratorV vend() const { return IteratorHelper<ConstIteratorV>::end(*this); }
-    IteratorV vbegin() { return IteratorHelper<IteratorV>::begin(*this); }
-    IteratorV vend() { return IteratorHelper<IteratorV>::end(*this); }
+    [[nodiscard]] inline bool has(const TKey& key) const noexcept { return (find(key) != iend()); }
 
-    ConstIteratorKV ibegin() const { return IteratorHelper<ConstIteratorKV>::begin(*this); }
-    ConstIteratorKV iend() const { return IteratorHelper<ConstIteratorKV>::end(*this); }
-    IteratorKV ibegin() { return IteratorHelper<IteratorKV>::begin(*this); }
-    IteratorKV iend() { return IteratorHelper<IteratorKV>::end(*this); }
+    inline TValue& operator[](const TKey& key)
+    {
+        std::pair<IteratorKV, bool> it = emplace(key);
+        return it.first.value();
+    }
+
+    [[nodiscard]] inline IteratorK begin() const { return IteratorHelper<IteratorK>::begin(*this); }
+    [[nodiscard]] inline IteratorK end() const { return IteratorHelper<IteratorK>::end(*this); }
+
+    [[nodiscard]] inline ConstIteratorV vbegin() const { return IteratorHelper<ConstIteratorV>::begin(*this); }
+    [[nodiscard]] inline ConstIteratorV vend() const { return IteratorHelper<ConstIteratorV>::end(*this); }
+    [[nodiscard]] inline IteratorV vbegin() { return IteratorHelper<IteratorV>::begin(*this); }
+    [[nodiscard]] inline IteratorV vend() { return IteratorHelper<IteratorV>::end(*this); }
+
+    [[nodiscard]] inline ConstIteratorKV ibegin() const { return IteratorHelper<ConstIteratorKV>::begin(*this); }
+    [[nodiscard]] inline ConstIteratorKV iend() const { return IteratorHelper<ConstIteratorKV>::end(*this); }
+    [[nodiscard]] inline IteratorKV ibegin() { return IteratorHelper<IteratorKV>::begin(*this); }
+    [[nodiscard]] inline IteratorKV iend() { return IteratorHelper<IteratorKV>::end(*this); }
 
     template <typename TIterator> struct TypedIteratorHelper
     {
@@ -853,38 +739,37 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     using ConstValues = TypedIteratorHelper<ConstIteratorV>;
     using ConstItems = TypedIteratorHelper<ConstIteratorKV>;
 
-    Keys keys() const { return Keys(this); }
-    ConstValues values() const { return ConstValues(this); }
-    ConstItems items() const { return ConstItems(this); }
+    [[nodiscard]] inline Keys keys() const { return Keys(this); }
+    [[nodiscard]] inline ConstValues values() const { return ConstValues(this); }
+    [[nodiscard]] inline ConstItems items() const { return ConstItems(this); }
 
-    Values values() { return Values(this); }
-    Items items() { return Items(this); }
+    [[nodiscard]] inline Values values() { return Values(this); }
+    [[nodiscard]] inline Items items() { return Items(this); }
 
     // copy ctor
     HashTable(const HashTable& other)
     {
-        create(other.numChunks);
+        create(other.m_numBuckets);
         copyOrMoveTo(*this, other);
     }
 
     // copy assignment
     HashTable& operator=(const HashTable& other)
     {
-        uint32_t newNumChunks = numChunks;
-        HashTable newHash(newNumChunks);
-        copyOrMoveTo(newHash, other);
-        swap(newHash);
+        uint32_t numBucketsCopy = m_numBuckets;
+        HashTable hashCopy(numBucketsCopy);
+        copyOrMoveTo(hashCopy, other);
+        swap(hashCopy);
         return *this;
     }
 
     // move ctor
     HashTable(HashTable&& other)
-        : chunksStorage(nullptr)
-        , lastChunk(nullptr)
-        , valuesStorage(nullptr)
-        , numChunks(0)
-        , numElements(0)
+        : m_valuesStorage(nullptr)
+        , m_numBuckets(1)
+        , m_numElements(0)
     {
+        allocateInline();
         swap(other);
     }
 
@@ -896,11 +781,15 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     }
 
   private:
-    Chunk* chunksStorage;
-    Chunk* lastChunk;
-    ValueStorage* valuesStorage;
-    uint32_t numChunks;
-    uint32_t numElements;
+    // prefix m_ to be able to easily see member access from the code (it could be more expensive in the inner loop)
+    TKey* m_keysStorage;     // 8
+    TValue* m_valuesStorage; // 8
+    uint32_t m_numBuckets;   // 4
+    uint32_t m_numElements;  // 4
+
+    // we need this key to keep m_keysStorage not null all the time. this will save us a few null pointer checks
+    typename std::aligned_storage<sizeof(TKey), alignof(TKey)>::type m_inlineKeysStorage;
+    static_assert(sizeof(m_inlineKeysStorage) == sizeof(TKey), "Incorrect sizeof");
 };
 
 } // namespace Excalibur
