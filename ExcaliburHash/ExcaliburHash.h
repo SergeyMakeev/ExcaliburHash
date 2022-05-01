@@ -146,7 +146,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 return end(ht);
             }
 
-            const uint32_t numBuckets = ht.m_numBuckets;
             TValue* EXLBR_RESTRICT value = ht.m_valuesStorage;
             TKey* EXLBR_RESTRICT key = ht.m_keysStorage;
             while (true)
