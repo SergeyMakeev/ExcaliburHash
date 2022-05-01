@@ -359,7 +359,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             : m_ht(ht)
         {
             TKey* const firstKey = ht->m_keysStorage;
-            TKey* const endKey = firstKey + ht->m_numBuckets;
             EXLBR_ASSERT(key >= firstKey && key <= endKey);
             const size_t index = size_t(key - firstKey);
             EXLBR_ASSERT(firstKey + index == key);
