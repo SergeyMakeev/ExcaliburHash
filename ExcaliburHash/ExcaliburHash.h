@@ -119,22 +119,22 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         struct TItem
         {
             using TValueStorage = typename std::aligned_storage<sizeof(TValue), alignof(TValue)>::type;
-            TKey _key;
-            TValueStorage _value;
+            TKey m_key;
+            TValueStorage m_value;
 
-            inline TItem(TKey&& other)
-                : _key(std::move(other))
+            inline TItem(TKey&& other) noexcept
+                : m_key(std::move(other))
             {
             }
-            inline bool isValid() const { return TKeyInfo::isValid(_key); }
-            inline bool isEmpty() const { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), _key); }
-            inline bool isTombstone() const { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), _key); }
-            inline bool isEqual(const TKey& key) const { return TKeyInfo::isEqual(key, _key); }
+            [[nodiscard]] inline bool isValid() const noexcept { return TKeyInfo::isValid(m_key); }
+            [[nodiscard]] inline bool isEmpty() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), m_key); }
+            [[nodiscard]] inline bool isTombstone() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), m_key); }
+            [[nodiscard]] inline bool isEqual(const TKey& key) const noexcept { return TKeyInfo::isEqual(key, m_key); }
 
-            inline TKey* getK_() { return &_key; }
-            inline TValue* getV_()
+            [[nodiscard]] inline TKey* key() noexcept { return &m_key; }
+            [[nodiscard]] inline TValue* value() noexcept
             {
-                TValue* value = reinterpret_cast<TValue*>(&_value);
+                TValue* value = reinterpret_cast<TValue*>(&m_value);
                 return value;
             }
         };
@@ -144,19 +144,19 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     {
         struct TItem
         {
-            TKey _key;
+            TKey m_key;
 
-            inline TItem(TKey&& other)
-                : _key(std::move(other))
+            inline TItem(TKey&& other) noexcept
+                : m_key(std::move(other))
             {
             }
-            inline bool isValid() const { return TKeyInfo::isValid(_key); }
-            inline bool isEmpty() const { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), _key); }
-            inline bool isTombstone() const { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), _key); }
-            inline bool isEqual(const TKey& key) const { return TKeyInfo::isEqual(key, _key); }
+            [[nodiscard]] inline bool isValid() const noexcept { return TKeyInfo::isValid(m_key); }
+            [[nodiscard]] inline bool isEmpty() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), m_key); }
+            [[nodiscard]] inline bool isTombstone() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), m_key); }
+            [[nodiscard]] inline bool isEqual(const TKey& key) const noexcept { return TKeyInfo::isEqual(key, m_key); }
 
-            inline TKey* getK_() { return &_key; }
-            // inline TValue* getV_() { return nullptr; }
+            [[nodiscard]] inline TKey* key() noexcept { return &m_key; }
+            // inline TValue* value() noexcept{ return nullptr; }
         };
     };
 
@@ -168,7 +168,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (v >> shift);
     }
 
-    inline uint32_t nextPow2(uint32_t v)
+    [[nodiscard]] inline uint32_t nextPow2(uint32_t v) noexcept
     {
         EXLBR_ASSERT(v != 0);
         v--;
@@ -238,15 +238,15 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             // if using inline storage than let's move items from one inline storage into another
             TItem* otherInlineItem = reinterpret_cast<TItem*>(&other.m_inlineStorage);
             bool hasValidValue = otherInlineItem->isValid();
-            TItem* inlineItem = allocateInline(std::move(*otherInlineItem->getK_()));
+            TItem* inlineItem = allocateInline(std::move(*otherInlineItem->key()));
 
             if constexpr (has_values::value)
             {
                 // move inline storage value (if any)
                 if (hasValidValue)
                 {
-                    TValue* value = inlineItem->getV_();
-                    TValue* otherValue = otherInlineItem->getV_();
+                    TValue* value = inlineItem->value();
+                    TValue* otherValue = otherInlineItem->value();
                     construct<TValue>(value, std::move(*otherValue));
                     destruct(otherValue);
                 }
@@ -278,11 +278,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             {
                 if constexpr (has_values::value)
                 {
-                    emplace(*item->getK_(), *item->getV_());
+                    emplace(*item->key(), *item->value());
                 }
                 else
                 {
-                    emplace(*item->getK_());
+                    emplace(*item->key());
                 }
             }
         }
@@ -306,11 +306,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             {
                 if constexpr (has_values::value)
                 {
-                    emplace(std::move(*item->getK_()), std::move(*item->getV_()));
+                    emplace(std::move(*item->key()), std::move(*item->value()));
                 }
                 else
                 {
-                    emplace(std::move(*item->getK_()));
+                    emplace(std::move(*item->key()));
                 }
             }
             destruct(item);
@@ -322,7 +322,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
     }
 
-    inline bool isUsingInlineStorage() const
+    [[nodiscard]] inline bool isUsingInlineStorage() const noexcept
     {
         const TItem* inlineStorage = reinterpret_cast<const TItem*>(&m_inlineStorage);
         return (inlineStorage == m_storage);
@@ -425,12 +425,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         [[nodiscard]] inline const TKey* getKey() const noexcept
         {
             EXLBR_ASSERT(m_item->isValid());
-            return m_item->getK_();
+            return m_item->key();
         }
         [[nodiscard]] inline const TValue* getValue() const noexcept
         {
             EXLBR_ASSERT(m_item->isValid());
-            return m_item->getV_();
+            return m_item->value();
         }
 
       public:
@@ -610,12 +610,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             {
                 if (item->isValid())
                 {
-                    destruct(item->getV_());
+                    destruct(item->value());
                 }
             }
 
             // set key to empty
-            *item->getK_() = TKeyInfo::getEmpty();
+            *item->key() = TKeyInfo::getEmpty();
         }
         // TODO: shrink if needed?
         m_numElements = 0;
@@ -659,11 +659,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 insertItem = ((insertItem == nullptr) ? currentItem : insertItem);
 
                 // move key
-                *insertItem->getK_() = std::move(key);
+                *insertItem->key() = std::move(key);
                 // construct value if need
                 if constexpr (has_values::value)
                 {
-                    construct<TValue>(insertItem->getV_(), std::forward<Args>(args)...);
+                    construct<TValue>(insertItem->value(), std::forward<Args>(args)...);
                 }
                 m_numElements++;
                 return std::make_pair(IteratorKV(this, insertItem), true);
@@ -677,12 +677,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
     }
 
-    inline ConstIteratorKV find(const TKey& key) const noexcept
+    [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept
     {
         TItem* item = findImpl(key);
         return ConstIteratorKV(this, item);
     }
-    inline IteratorKV find(const TKey& key) noexcept
+    [[nodiscard]] inline IteratorKV find(const TKey& key) noexcept
     {
         TItem* item = findImpl(key);
         return IteratorKV(this, item);
@@ -711,7 +711,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             TItem* const endItem = item + m_numBuckets;
             for (; item != endItem; item++)
             {
-                *item->getK_() = TKeyInfo::getEmpty();
+                *item->key() = TKeyInfo::getEmpty();
             }
             return true;
         }
@@ -820,7 +820,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     }
 
     // move ctor
-    HashTable(HashTable&& other)
+    HashTable(HashTable&& other) noexcept
     //: m_storage(nullptr)
     //, m_numBuckets(1)
     //, m_numElements(0)
@@ -830,7 +830,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     }
 
     // move assignment
-    HashTable& operator=(HashTable&& other)
+    HashTable& operator=(HashTable&& other) noexcept
     {
         if (&other == this)
         {
