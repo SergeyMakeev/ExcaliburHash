@@ -333,7 +333,15 @@ TEST(SmFlatHashMap, CopyEdgeCases)
     EXPECT_NE(ht1.find(3), ht1.iend());
 
     // assign to self
-    ht1 = ht1;
+
+    /*
+    from Clang 7.0.0 release notes
+   
+    -Wself-assign and -Wself-assign-field were extended to diagnose self-assignment operations using overloaded operators (i.e. classes).
+    If you are doing such an assignment intentionally, e.g. in a unit test for a data structure, the first warning can be disabled by passing
+    -Wno-self-assign-overloaded, also the warning can be suppressed by adding *& to the right-hand side or casting it to the appropriate reference type.
+    */
+    ht1 = *&ht1;
     EXPECT_EQ(ht1.size(), uint32_t(3));
     EXPECT_NE(ht1.find(1), ht1.iend());
     EXPECT_NE(ht1.find(2), ht1.iend());
@@ -461,8 +469,18 @@ TEST(SmFlatHashMap, MoveEdgeCases)
 
     {
         // move to self
+
+        /*
+        from Clang 7.0.0 release notes
+
+        -Wself-assign and -Wself-assign-field were extended to diagnose self-assignment operations using overloaded operators (i.e.
+        classes). If you are doing such an assignment intentionally, e.g. in a unit test for a data structure, the first warning can be
+        disabled by passing -Wno-self-assign-overloaded, also the warning can be suppressed by adding *& to the right-hand side or casting
+        it to the appropriate reference type.
+        */
+
         Excalibur::HashTable<int, int> htHuge = makeHugeHashTable();
-        htHuge = std::move(htHuge);
+        htHuge = std::move(*&htHuge);
         EXPECT_EQ(htHuge.size(), uint32_t(kNumElementsInHugeTable));
     }
 }
