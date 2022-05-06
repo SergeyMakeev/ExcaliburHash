@@ -110,11 +110,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     }
     template <typename T> static void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
 
-    template <bool hasValue> struct Storage
+    template <bool hasValue, typename dummy = void> struct Storage
     {
     };
 
-    template <> struct Storage<true>
+    template <typename dummy> struct Storage<true, dummy>
     {
         struct TItem
         {
@@ -140,7 +140,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         };
     };
 
-    template <> struct Storage<false>
+    template <typename dummy> struct Storage<false, dummy>
     {
         struct TItem
         {
