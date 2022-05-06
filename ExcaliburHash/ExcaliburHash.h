@@ -1,7 +1,7 @@
 #pragma once
 
-#include <stdint.h>
 #include <algorithm>
+#include <stdint.h>
 #include <type_traits>
 #include <utility>
 
@@ -22,17 +22,20 @@
 #if !defined(EXLBR_ASSERT)
     #include <assert.h>
     #define EXLBR_ASSERT(expression) assert(expression)
+/*
+    #define EXLBR_ASSERT(expr)                                                                                                             \
+        do                                                                                                                                 \
+        {                                                                                                                                  \
+            if (!(expr))                                                                                                                   \
+                _CrtDbgBreak();                                                                                                            \
+        } while (0)
+*/
 #endif
 
 #if !defined(EXLBR_RESTRICT)
     #define EXLBR_RESTRICT __restrict
 #endif
 
-//
-//
-// KeyInfo for common types (TODO: move to separate header?)
-//
-//
 namespace Excalibur
 {
 
@@ -55,6 +58,7 @@ template <> struct KeyInfo<int>
     static inline bool isEqual(const int& lhs, const int& rhs) noexcept { return lhs == rhs; }
 };
 
+/*
 template <> struct KeyInfo<uint32_t>
 {
     static inline bool isValid(const uint32_t& key) noexcept { return key < 0xfffffffe; }
@@ -64,8 +68,7 @@ template <> struct KeyInfo<uint32_t>
     static inline bool isEqual(const uint32_t& lhs, const uint32_t& rhs) noexcept { return lhs == rhs; }
 };
 
-/*
-template <> struct KeyInfo<std::string>
+ template <> struct KeyInfo<std::string>
 {
     static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
     static inline std::string getTombstone() noexcept
@@ -78,8 +81,6 @@ template <> struct KeyInfo<std::string>
     static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
 };
 */
-
-// TODO - add KeyInfo for all built-in types?
 
 } // namespace Excalibur
 
@@ -97,7 +98,69 @@ TODO: Memory layout
 */
 template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> class HashTable
 {
+    struct has_values : std::bool_constant<!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value>
+    {
+    };
+
     static inline constexpr uint32_t k_MinNumberOfBuckets = 16;
+
+    template <typename T, class... Args> static void construct(void* EXLBR_RESTRICT ptr, Args&&... args)
+    {
+        new (ptr) T(std::forward<Args>(args)...);
+    }
+    template <typename T> static void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
+
+    template <bool hasValue> struct Storage
+    {
+    };
+
+    template <> struct Storage<true>
+    {
+        struct TItem
+        {
+            using TValueStorage = typename std::aligned_storage<sizeof(TValue), alignof(TValue)>::type;
+            TKey _key;
+            TValueStorage _value;
+
+            inline TItem(TKey&& other)
+                : _key(std::move(other))
+            {
+            }
+            inline bool isValid() const { return TKeyInfo::isValid(_key); }
+            inline bool isEmpty() const { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), _key); }
+            inline bool isTombstone() const { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), _key); }
+            inline bool isEqual(const TKey& key) const { return TKeyInfo::isEqual(key, _key); }
+
+            inline TKey* getK_() { return &_key; }
+            inline TValue* getV_()
+            {
+                TValue* value = reinterpret_cast<TValue*>(&_value);
+                return value;
+            }
+        };
+    };
+
+    template <> struct Storage<false>
+    {
+        struct TItem
+        {
+            TKey _key;
+
+            inline TItem(TKey&& other)
+                : _key(std::move(other))
+            {
+            }
+            inline bool isValid() const { return TKeyInfo::isValid(_key); }
+            inline bool isEmpty() const { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), _key); }
+            inline bool isTombstone() const { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), _key); }
+            inline bool isEqual(const TKey& key) const { return TKeyInfo::isEqual(key, _key); }
+
+            inline TKey* getK_() { return &_key; }
+            // inline TValue* getV_() { return nullptr; }
+        };
+    };
+
+    using TItem = typename Storage<has_values::value>::TItem;
 
     template <typename T> static inline T shr(T v, T shift) noexcept
     {
@@ -118,16 +181,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return v;
     }
 
-    struct has_values : std::bool_constant<!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value>
-    {
-    };
-
-    template <typename T, class... Args> static void construct(void* EXLBR_RESTRICT ptr, Args&&... args)
-    {
-        new (ptr) T(std::forward<Args>(args)...);
-    }
-    template <typename T> void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
-
     [[nodiscard]] static inline size_t align(size_t cursor, size_t alignment) noexcept
     {
         return (cursor + (alignment - 1)) & ~(alignment - 1);
@@ -146,250 +199,270 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
                 return end(ht);
             }
 
-            TValue* EXLBR_RESTRICT value = ht.m_valuesStorage;
-            TKey* EXLBR_RESTRICT key = ht.m_keysStorage;
+            TItem* EXLBR_RESTRICT item = ht.m_storage;
             while (true)
             {
-                if (TKeyInfo::isValid(*key))
+                if (item->isValid())
                 {
-                    return TIterator(&ht, key, value);
+                    return TIterator(&ht, item);
                 }
-                key++;
-                value++;
+                item++;
             }
         }
 
         [[nodiscard]] static TIterator end(const HashTable& ht) noexcept
         {
             const uint32_t numBuckets = ht.m_numBuckets;
-            TKey* const endKey = ht.m_keysStorage + numBuckets;
-            TValue* const endValue = ht.m_valuesStorage + numBuckets;
-            return TIterator(&ht, endKey, endValue);
+            TItem* const endItem = ht.m_storage + numBuckets;
+            return TIterator(&ht, endItem);
         }
     };
 
-    template <typename THashTableSrc, typename THashTableDst> static inline void copyOrMoveTo(THashTableDst&& dst, THashTableSrc&& src)
+    inline void moveFrom(HashTable&& other)
     {
-        EXLBR_ASSERT(dst.empty());
-        if (src.empty())
+        // note: the current hash table is supposed to be destroyed/non-initialized
+
+        if (!other.isUsingInlineStorage())
+        {
+            // if not using inline storage than it's a simple pointer swap
+            allocateInline(TKeyInfo::getEmpty());
+            m_storage = other.m_storage;
+            m_numBuckets = other.m_numBuckets;
+            m_numElements = other.m_numElements;
+            other.m_storage = nullptr;
+            // other.m_numBuckets = 0;
+            // other.m_numElements = 0;
+        }
+        else
+        {
+            // if using inline storage than let's move items from one inline storage into another
+            TItem* otherInlineItem = reinterpret_cast<TItem*>(&other.m_inlineStorage);
+            bool hasValidValue = otherInlineItem->isValid();
+            TItem* inlineItem = allocateInline(std::move(*otherInlineItem->getK_()));
+
+            if constexpr (has_values::value)
+            {
+                // move inline storage value (if any)
+                if (hasValidValue)
+                {
+                    TValue* value = inlineItem->getV_();
+                    TValue* otherValue = otherInlineItem->getV_();
+                    construct<TValue>(value, std::move(*otherValue));
+                    destruct(otherValue);
+                }
+            }
+
+            m_storage = inlineItem;
+            m_numBuckets = other.m_numBuckets;
+            m_numElements = other.m_numElements;
+            // destruct(otherInlineItem);
+            other.m_storage = nullptr;
+            // other.m_numBuckets = 0;
+            // other.m_numElements = 0;
+        }
+    }
+
+    inline void copyFrom(const HashTable& other)
+    {
+        if (other.empty())
         {
             return;
         }
-        const uint32_t numBuckets = src.m_numBuckets;
-        TValue* EXLBR_RESTRICT value = src.m_valuesStorage;
-        TKey* EXLBR_RESTRICT key = src.m_keysStorage;
-        TKey* const endKey = key + numBuckets;
-        for (; key != endKey; key++, value++)
+
+        const uint32_t numBuckets = other.m_numBuckets;
+        TItem* EXLBR_RESTRICT item = other.m_storage;
+        TItem* const enditem = item + numBuckets;
+        for (; item != enditem; item++)
         {
-            if (TKeyInfo::isValid(*key))
+            if (item->isValid())
             {
                 if constexpr (has_values::value)
                 {
-                    dst.emplace(std::move(*key), std::move(*value));
+                    emplace(*item->getK_(), *item->getV_());
                 }
                 else
                 {
-                    dst.emplace(std::move(*key));
+                    emplace(*item->getK_());
                 }
             }
         }
-        EXLBR_ASSERT(dst.size() == src.size());
     }
 
-    inline void rehash()
+    inline void grow(uint32_t numBucketsNew)
     {
-        uint32_t numBucketsNew = m_numBuckets * 2;
-        HashTable newHash(numBucketsNew);
-        copyOrMoveTo(newHash, std::move(*this));
-        swap(newHash);
-    }
+        const uint32_t numBuckets = m_numBuckets;
+        TItem* storage = m_storage;
+        TItem* EXLBR_RESTRICT item = storage;
+        TItem* const enditem = item + numBuckets;
+        bool isInlineStorage = isUsingInlineStorage();
 
-    inline void allocateInline()
-    {
-        TKey* inlineKey = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
-        construct<TKey>(inlineKey, TKeyInfo::getEmpty());
-        m_keysStorage = inlineKey;
-    }
+        // m_storage = nullptr;
+        // m_numBuckets = 0;
+        create(numBucketsNew);
 
-    inline void destroyInline()
-    {
-        if constexpr (!std::is_trivially_destructible<TKey>::value)
+        for (; item != enditem; item++)
         {
-            TKey* inlineKey = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
-            destruct(inlineKey);
+            if (item->isValid())
+            {
+                if constexpr (has_values::value)
+                {
+                    emplace(std::move(*item->getK_()), std::move(*item->getV_()));
+                }
+                else
+                {
+                    emplace(std::move(*item->getK_()));
+                }
+            }
+            destruct(item);
         }
+
+        if (!isInlineStorage)
+        {
+            EXLBR_FREE(storage);
+        }
+    }
+
+    inline bool isUsingInlineStorage() const
+    {
+        const TItem* inlineStorage = reinterpret_cast<const TItem*>(&m_inlineStorage);
+        return (inlineStorage == m_storage);
+    }
+
+    template <class... Args> inline TItem* allocateInline(Args&&... args)
+    {
+        TItem* inlineItem = reinterpret_cast<TItem*>(&m_inlineStorage);
+        construct<TItem>(inlineItem, std::forward<Args>(args)...);
+        return inlineItem;
     }
 
     inline void create(uint32_t numBuckets)
     {
-        allocateInline();
-
         numBuckets = (numBuckets < k_MinNumberOfBuckets) ? k_MinNumberOfBuckets : numBuckets;
 
         // numBuckets has to be power-of-two
         EXLBR_ASSERT(numBuckets > 0);
         EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
 
-        size_t numBytesKeys = numBuckets * sizeof(TKey);
-        size_t numBytesKeysAligned = align(numBytesKeys, alignof(TValue));
+        size_t numBytes = sizeof(TItem) * numBuckets;
+        // note: 64 to match CPU cache line size
+        size_t alignment = std::max(alignof(TItem), size_t(64));
+        numBytes = align(numBytes, alignment);
+        EXLBR_ASSERT((numBytes % alignment) == 0);
 
-        size_t alignment = alignof(TKey);
-        size_t numBytesValues = 0;
-        if constexpr (has_values::value)
-        {
-            numBytesValues = numBuckets * sizeof(TValue);
-            alignment = std::max(alignment, alignof(TValue));
-        }
-
-        alignment = std::max(alignment, size_t(64)); // note: 64 to match CPU cache line size
-        size_t numBytesTotal = numBytesKeysAligned + numBytesValues;
-        numBytesTotal = align(numBytesTotal, alignment);
-
-        EXLBR_ASSERT((numBytesTotal % alignment) == 0);
-
-        void* raw = EXLBR_ALLOC(numBytesTotal, alignment);
+        void* raw = EXLBR_ALLOC(numBytes, alignment);
         EXLBR_ASSERT(raw);
-        m_keysStorage = reinterpret_cast<TKey*>(raw);
-        EXLBR_ASSERT(raw == m_keysStorage);
-        EXLBR_ASSERT(isPointerAligned(m_keysStorage, alignof(TKey)));
-
-        if constexpr (has_values::value)
-        {
-            m_valuesStorage = reinterpret_cast<TValue*>((reinterpret_cast<char*>(raw) + numBytesKeysAligned));
-            EXLBR_ASSERT(m_valuesStorage);
-            EXLBR_ASSERT(isPointerAligned(m_valuesStorage, alignof(TValue)));
-        }
-        else
-        {
-            m_valuesStorage = nullptr;
-        }
+        m_storage = reinterpret_cast<TItem*>(raw);
+        EXLBR_ASSERT(raw == m_storage);
+        EXLBR_ASSERT(isPointerAligned(m_storage, alignof(TItem)));
 
         m_numBuckets = numBuckets;
         m_numElements = 0;
 
-        TKey* EXLBR_RESTRICT key = m_keysStorage;
-        TKey* const endKey = key + numBuckets;
-        for (; key != endKey; key++)
+        TItem* EXLBR_RESTRICT item = m_storage;
+        TItem* const endItem = item + numBuckets;
+        for (; item != endItem; item++)
         {
-            construct<TKey>(key, TKeyInfo::getEmpty());
+            construct<TItem>(item, TKeyInfo::getEmpty());
         }
     }
 
     inline void destroy()
     {
         const uint32_t numBuckets = m_numBuckets;
-        TValue* EXLBR_RESTRICT value = m_valuesStorage;
-        TKey* EXLBR_RESTRICT key = m_keysStorage;
-        TKey* const endKey = key + numBuckets;
-        for (; key != endKey; key++, value++)
+        TItem* EXLBR_RESTRICT item = m_storage;
+        TItem* const endItem = item + numBuckets;
+        for (; item != endItem; item++)
         {
-            if (TKeyInfo::isValid(*key))
-            {
-                // destroy value
-                if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
-                {
-                    destruct(value);
-                }
-            }
-
-            if constexpr (!std::is_trivially_destructible<TKey>::value)
-            {
-                destruct(key);
-            }
+            destruct(item);
         }
     }
 
-    [[nodiscard]] inline TKey* findImpl(const TKey& key) const noexcept
+    inline void destroyAndFreeMemory()
+    {
+        if constexpr (!std::is_trivially_destructible<TValue>::value || !std::is_trivially_destructible<TKey>::value)
+        {
+            destroy();
+        }
+
+        if (!isUsingInlineStorage())
+        {
+            EXLBR_FREE(m_storage);
+        }
+    }
+
+    [[nodiscard]] inline TItem* findImpl(const TKey& key) const noexcept
     {
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
         const uint32_t numBuckets = m_numBuckets;
-        TKey* const firstKey = m_keysStorage;
-        TKey* const endKey = firstKey + numBuckets;
+        TItem* const firstItem = m_storage;
+        TItem* const endItem = firstItem + numBuckets;
         const uint64_t hashValue = TKeyInfo::hash(key);
         uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
-        TKey* EXLBR_RESTRICT currentKey = firstKey + bucketIndex;
-        while (true)
+        TItem* startItem = firstItem + bucketIndex;
+        TItem* EXLBR_RESTRICT currentItem = startItem;
+        do
         {
-            if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *currentKey))
+            if (currentItem->isEmpty())
             {
-                return endKey;
+                return endItem;
             }
 
-            if (TKeyInfo::isEqual(key, *currentKey))
+            if (currentItem->isEqual(key))
             {
-                return currentKey;
+                return currentItem;
             }
-            currentKey++;
-            currentKey = (currentKey == endKey) ? firstKey : currentKey;
-        }
+            currentItem++;
+            currentItem = (currentItem == endItem) ? firstItem : currentItem;
+        } while (currentItem != startItem);
+        return endItem;
     }
-
-    explicit HashTable(uint32_t _numChunks) { create(_numChunks); }
 
   public:
     class IteratorBase
     {
       protected:
-        [[nodiscard]] inline const TValue* getValue() const noexcept
-        {
-            EXLBR_ASSERT(m_value >= m_ht->m_valuesStorage && m_value <= m_ht->m_valuesStorage + m_ht->m_numBuckets);
-            return m_value;
-        }
         [[nodiscard]] inline const TKey* getKey() const noexcept
         {
-            EXLBR_ASSERT(m_key >= m_ht->m_keysStorage && m_key <= m_ht->m_keysStorage + m_ht->m_numBuckets);
-            EXLBR_ASSERT(TKeyInfo::isValid(*m_key));
-            return m_key;
+            EXLBR_ASSERT(m_item->isValid());
+            return m_item->getK_();
+        }
+        [[nodiscard]] inline const TValue* getValue() const noexcept
+        {
+            EXLBR_ASSERT(m_item->isValid());
+            return m_item->getV_();
         }
 
       public:
         IteratorBase() = delete;
 
-        IteratorBase(const HashTable* ht, TKey* key, TValue* value) noexcept
+        IteratorBase(const HashTable* ht, TItem* item) noexcept
             : m_ht(ht)
+            , m_item(item)
         {
-            EXLBR_ASSERT(key >= ht->m_keysStorage && key <= ht->m_keysStorage + ht->m_numBuckets);
-            EXLBR_ASSERT(value == nullptr || (ht->m_valuesStorage + size_t(key - ht->m_keysStorage)) == value);
-            m_key = key;
-            m_value = value;
-        }
-
-        IteratorBase(const HashTable* ht, TKey* key) noexcept
-            : m_ht(ht)
-        {
-            TKey* const firstKey = ht->m_keysStorage;
-            EXLBR_ASSERT(key >= firstKey && key <= (firstKey + ht->m_numBuckets));
-            const size_t index = size_t(key - firstKey);
-            EXLBR_ASSERT(firstKey + index == key);
-            m_key = key;
-            m_value = m_ht->m_valuesStorage + index;
         }
 
         bool operator==(const IteratorBase& other) const noexcept
         {
             // note: m_ht comparison is redundant and hence skipped
-            return m_key == other.m_key && m_value == other.m_value;
+            return m_item == other.m_item;
         }
         bool operator!=(const IteratorBase& other) const noexcept
         {
             // note: m_ht comparison is redundant and hence skipped
-            return m_key != other.m_key || m_value != other.m_value;
+            return m_item != other.m_item;
         }
 
         IteratorBase& operator++() noexcept
         {
-            TKey* endKey = m_ht->m_keysStorage + m_ht->m_numBuckets;
-            TKey* EXLBR_RESTRICT key = m_key;
-            TValue* EXLBR_RESTRICT value = m_value;
+            TItem* endItem = m_ht->m_storage + m_ht->m_numBuckets;
+            TItem* EXLBR_RESTRICT item = m_item;
             do
             {
-                key++;
-                value++;
-            } while (key < endKey && !TKeyInfo::isValid(*key));
+                item++;
+            } while (item < endItem && !item->isValid());
 
-            m_key = key;
-            m_value = value;
+            m_item = item;
             return *this;
         }
 
@@ -402,8 +475,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
       protected:
         const HashTable* m_ht;
-        TKey* m_key;
-        TValue* m_value;
+        TItem* m_item;
         friend class HashTable<TKey, TValue, TKeyInfo>;
     };
 
@@ -412,13 +484,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         IteratorK() = delete;
 
-        IteratorK(const HashTable* ht, TKey* key, TValue* value) noexcept
-            : IteratorBase(ht, key, value)
-        {
-        }
-
-        IteratorK(const HashTable* ht, TKey* key) noexcept
-            : IteratorBase(ht, key)
+        IteratorK(const HashTable* ht, TItem* item) noexcept
+            : IteratorBase(ht, item)
         {
         }
 
@@ -431,13 +498,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorV() = delete;
 
-        TIteratorV(const HashTable* ht, TKey* key, TValue* value) noexcept
-            : IteratorBase(ht, key, value)
-        {
-        }
-
-        TIteratorV(const HashTable* ht, TKey* key) noexcept
-            : IteratorBase(ht, key)
+        TIteratorV(const HashTable* ht, TItem* item) noexcept
+            : IteratorBase(ht, item)
         {
         }
 
@@ -486,14 +548,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorKV() = delete;
 
-        TIteratorKV(const HashTable* ht, TKey* key, TValue* value) noexcept
-            : IteratorBase(ht, key, value)
-            , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
-        {
-        }
-
-        TIteratorKV(const HashTable* ht, TKey* key) noexcept
-            : IteratorBase(ht, key)
+        TIteratorKV(const HashTable* ht, TItem* item) noexcept
+            : IteratorBase(ht, item)
             , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
         {
         }
@@ -522,41 +578,19 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     using ConstIteratorV = TIteratorV<const TValue>;
 
     HashTable() noexcept
-        : m_valuesStorage(nullptr)
-        , m_numBuckets(1)
+        //: m_storage(nullptr)
+        : m_numBuckets(1)
         , m_numElements(0)
     {
-        allocateInline();
+        m_storage = allocateInline(TKeyInfo::getEmpty());
     }
 
     ~HashTable()
     {
-        const TKey* inlineKeyStorage = reinterpret_cast<const TKey*>(&m_inlineKeysStorage);
-        if (inlineKeyStorage != m_keysStorage)
+        if (m_storage)
         {
-            if constexpr (!std::is_trivially_destructible<TValue>::value || !std::is_trivially_destructible<TKey>::value)
-            {
-                destroy();
-            }
-            EXLBR_FREE(m_keysStorage);
+            destroyAndFreeMemory();
         }
-        destroyInline();
-    }
-
-    inline void swap(HashTable& other) noexcept
-    {
-        // note: due to using inline keyStorage this logic is a bit more complex than simple
-        // std::swap(m_keysStorage, other.m_keysStorage)
-        TKey* inlineKeyStorage = reinterpret_cast<TKey*>(&m_inlineKeysStorage);
-        TKey* otherInlineKeyStorage = reinterpret_cast<TKey*>(&other.m_inlineKeysStorage);
-        TKey* keysStorage = m_keysStorage;
-        TKey* otherKeysStorage = other.m_keysStorage;
-        m_keysStorage = (otherKeysStorage == otherInlineKeyStorage) ? inlineKeyStorage : otherKeysStorage;
-        other.m_keysStorage = (keysStorage == inlineKeyStorage) ? otherInlineKeyStorage : keysStorage;
-
-        std::swap(m_valuesStorage, other.m_valuesStorage);
-        std::swap(m_numBuckets, other.m_numBuckets);
-        std::swap(m_numElements, other.m_numElements);
     }
 
     inline void clear()
@@ -567,22 +601,21 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
 
         const uint32_t numBuckets = m_numBuckets;
-        TValue* EXLBR_RESTRICT value = m_valuesStorage;
-        TKey* EXLBR_RESTRICT key = m_keysStorage;
-        TKey* const endKey = key + numBuckets;
-        for (; key != endKey; key++, value++)
+        TItem* EXLBR_RESTRICT item = m_storage;
+        TItem* const endItem = item + numBuckets;
+        for (; item != endItem; item++)
         {
-            if (TKeyInfo::isValid(*key))
+            // destroy value if need
+            if constexpr (!std::is_trivially_destructible<TValue>::value)
             {
-                // destroy value
-                if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
+                if (item->isValid())
                 {
-                    destruct(value);
+                    destruct(item->getV_());
                 }
-
-                // overwrite key with empty key
-                *key = TKeyInfo::getEmpty();
             }
+
+            // set key to empty
+            *item->getK_() = TKeyInfo::getEmpty();
         }
         // TODO: shrink if needed?
         m_numElements = 0;
@@ -599,9 +632,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
         const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
-        if (m_numElements >= numBucketsThreshold)
+        if (m_numElements > numBucketsThreshold)
         {
-            rehash();
+            grow(numBuckets * 2);
             numBuckets = m_numBuckets;
         }
 
@@ -610,48 +643,49 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
         const uint64_t hashValue = TKeyInfo::hash(key);
         const uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
-        TKey* const firstKey = m_keysStorage;
-        TKey* const endKey = firstKey + numBuckets;
-        TKey* EXLBR_RESTRICT currentKey = firstKey + bucketIndex;
-        TKey* insertKey = nullptr;
+        TItem* const firstItem = m_storage;
+        TItem* const endItem = firstItem + numBuckets;
+        TItem* EXLBR_RESTRICT currentItem = firstItem + bucketIndex;
+        TItem* insertItem = nullptr;
 
         while (true)
         {
-            if (TKeyInfo::isEqual(key, *currentKey))
+            if (currentItem->isEqual(key))
             {
-                return std::make_pair(IteratorKV(this, currentKey), false);
+                return std::make_pair(IteratorKV(this, currentItem), false);
             }
-            if (TKeyInfo::isEqual(TKeyInfo::getEmpty(), *currentKey))
+            if (currentItem->isEmpty())
             {
-                insertKey = ((insertKey == nullptr) ? currentKey : insertKey);
-                *insertKey = std::move(key);
-                size_t index = size_t(insertKey - firstKey);
-                TValue* value = m_valuesStorage + index;
+                insertItem = ((insertItem == nullptr) ? currentItem : insertItem);
+
+                // move key
+                *insertItem->getK_() = std::move(key);
+                // construct value if need
                 if constexpr (has_values::value)
                 {
-                    construct<TValue>(value, std::forward<Args>(args)...);
+                    construct<TValue>(insertItem->getV_(), std::forward<Args>(args)...);
                 }
                 m_numElements++;
-                return std::make_pair(IteratorKV(this, insertKey, value), true);
+                return std::make_pair(IteratorKV(this, insertItem), true);
             }
-            if (TKeyInfo::isEqual(TKeyInfo::getTombstone(), *currentKey) && insertKey == nullptr)
+            if (currentItem->isTombstone() && insertItem == nullptr)
             {
-                insertKey = currentKey;
+                insertItem = currentItem;
             }
-            currentKey++;
-            currentKey = (currentKey == endKey) ? firstKey : currentKey;
+            currentItem++;
+            currentItem = (currentItem == endItem) ? firstItem : currentItem;
         }
     }
 
     inline ConstIteratorKV find(const TKey& key) const noexcept
     {
-        TKey* keyBucket = findImpl(key);
-        return ConstIteratorKV(this, keyBucket);
+        TItem* item = findImpl(key);
+        return ConstIteratorKV(this, item);
     }
     inline IteratorKV find(const TKey& key) noexcept
     {
-        TKey* keyBucket = findImpl(key);
-        return IteratorKV(this, keyBucket);
+        TItem* item = findImpl(key);
+        return IteratorKV(this, item);
     }
 
     inline bool erase(const IteratorBase it)
@@ -668,6 +702,18 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
             TValue* itemValue = const_cast<TValue*>(it.getValue());
             destruct(itemValue);
+        }
+
+        // hash table now is empty. convert all tombstones to empty keys
+        if (m_numElements == 0)
+        {
+            TItem* EXLBR_RESTRICT item = m_storage;
+            TItem* const endItem = item + m_numBuckets;
+            for (; item != endItem; item++)
+            {
+                *item->getK_() = TKeyInfo::getEmpty();
+            }
+            return true;
         }
 
         // overwrite key with empty key
@@ -689,22 +735,28 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return false;
         }
         numBuckets = nextPow2(numBuckets);
-        HashTable newHash(numBuckets);
-        copyOrMoveTo(newHash, std::move(*this));
-        swap(newHash);
+        grow(numBuckets);
         return true;
     }
 
     [[nodiscard]] inline uint32_t size() const noexcept { return m_numElements; }
-    [[nodiscard]] inline uint32_t capacity() const noexcept { return (m_numBuckets < k_MinNumberOfBuckets) ? 0 : m_numBuckets; }
+    [[nodiscard]] inline uint32_t capacity() const noexcept { return m_numBuckets; }
     [[nodiscard]] inline bool empty() const noexcept { return (m_numElements == 0); }
 
     [[nodiscard]] inline bool has(const TKey& key) const noexcept { return (find(key) != iend()); }
 
     inline TValue& operator[](const TKey& key)
     {
-        std::pair<IteratorKV, bool> it = emplace(key);
-        return it.first.value();
+        IteratorKV it = find(key);
+        if (it != iend())
+        {
+            return it.value();
+        }
+        // note: we can not use `emplace()` without calling `find()` function first
+        // because calling `emplace()` function might grow the hash table even if a key exists in the table (which will invalidate existing
+        // iterators)
+        std::pair<IteratorKV, bool> emplaceIt = emplace(key);
+        return emplaceIt.first.value();
     }
 
     [[nodiscard]] inline IteratorK begin() const { return IteratorHelper<IteratorK>::begin(*this); }
@@ -747,47 +799,58 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     // copy ctor
     HashTable(const HashTable& other)
     {
+        EXLBR_ASSERT(&other != this);
+        m_storage = allocateInline(TKeyInfo::getEmpty());
         create(other.m_numBuckets);
-        copyOrMoveTo(*this, other);
+        copyFrom(other);
     }
 
     // copy assignment
     HashTable& operator=(const HashTable& other)
     {
-        uint32_t numBucketsCopy = m_numBuckets;
-        HashTable hashCopy(numBucketsCopy);
-        copyOrMoveTo(hashCopy, other);
-        swap(hashCopy);
+        if (&other == this)
+        {
+            return *this;
+        }
+        destroyAndFreeMemory();
+        m_storage = allocateInline(TKeyInfo::getEmpty());
+        create(other.m_numBuckets);
+        copyFrom(other);
         return *this;
     }
 
     // move ctor
     HashTable(HashTable&& other)
-        : m_valuesStorage(nullptr)
-        , m_numBuckets(1)
-        , m_numElements(0)
+    //: m_storage(nullptr)
+    //, m_numBuckets(1)
+    //, m_numElements(0)
     {
-        allocateInline();
-        swap(other);
+        EXLBR_ASSERT(&other != this);
+        moveFrom(std::move(other));
     }
 
     // move assignment
     HashTable& operator=(HashTable&& other)
     {
-        swap(other);
+        if (&other == this)
+        {
+            return *this;
+        }
+        destroyAndFreeMemory();
+        moveFrom(std::move(other));
         return *this;
     }
 
   private:
     // prefix m_ to be able to easily see member access from the code (it could be more expensive in the inner loop)
-    TKey* m_keysStorage;     // 8
-    TValue* m_valuesStorage; // 8
-    uint32_t m_numBuckets;   // 4
-    uint32_t m_numElements;  // 4
+    TItem* m_storage;       // 8
+    uint32_t m_numBuckets;  // 4
+    uint32_t m_numElements; // 4
 
-    // we need this key to keep m_keysStorage not null all the time. this will save us a few null pointer checks
-    typename std::aligned_storage<sizeof(TKey), alignof(TKey)>::type m_inlineKeysStorage;
-    static_assert(sizeof(m_inlineKeysStorage) == sizeof(TKey), "Incorrect sizeof");
+    // We need this inline storage to keep `m_storage` not null all the time.
+    // This will save us from `empty()` check inside `find()` function implementation
+    typename std::aligned_storage<sizeof(TItem), alignof(TItem)>::type m_inlineStorage;
+    static_assert(sizeof(m_inlineStorage) == sizeof(TItem), "Incorrect sizeof");
 };
 
 } // namespace Excalibur

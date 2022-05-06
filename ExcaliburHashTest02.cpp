@@ -63,7 +63,7 @@ TEST(SmFlatHashMap, CtorDtorCallCount)
         Excalibur::HashTable<ComplexStruct, int> ht;
         EXPECT_TRUE(ht.empty());
         EXPECT_EQ(ht.size(), 0u);
-        EXPECT_EQ(ht.capacity(), 0u);
+        EXPECT_GE(ht.capacity(), 0u);
 
         // emplace elements
         const uint32_t kNumElements = 5;
@@ -117,4 +117,59 @@ TEST(SmFlatHashMap, CtorDtorCallCount)
     }
 
     EXPECT_EQ(ctorCallCount, dtorCallCount);
+}
+
+
+
+struct BadHashStruct
+{
+    int v = 0;
+};
+
+
+namespace Excalibur
+{
+template <> struct KeyInfo<BadHashStruct>
+{
+    static inline bool isValid(const BadHashStruct& key) noexcept { return key.v < 0x7ffffffe; }
+    static inline BadHashStruct getTombstone() noexcept { return BadHashStruct{0x7fffffff}; }
+    static inline BadHashStruct getEmpty() noexcept { return BadHashStruct{0x7ffffffe}; }
+    static inline uint64_t hash(const BadHashStruct& /*key*/) noexcept
+    {
+        // Note: this is a very bad hash function causing 100% collisions
+        // added intentionally for the test
+        return 3;
+    }
+    static inline bool isEqual(const BadHashStruct& lhs, const BadHashStruct& rhs) noexcept { return lhs.v == rhs.v; }
+};
+} // namespace Excalibur
+
+
+TEST(SmFlatHashMap, InsertEraseReinsert)
+{
+    const int kNumElements = 1024;
+    Excalibur::HashTable<BadHashStruct, nullptr_t> ht;
+    EXPECT_EQ(ht.size(), 0u);
+    EXPECT_GE(ht.capacity(), 0u);
+
+    // fill table
+    for (int i = 0; i < kNumElements; i++)
+    {
+        ht.emplace(BadHashStruct{i});
+    }
+    EXPECT_EQ(ht.size(), uint32_t(kNumElements));
+
+    // remove all but one (all buckets are now fill with tombstones)
+    for (int i = 1; i < kNumElements; i++)
+    {
+        ht.erase(BadHashStruct{i});
+    }
+    EXPECT_EQ(ht.size(), uint32_t(1));
+
+    // (re)fill table again
+    for (int i = 0; i < kNumElements; i++)
+    {
+        ht.emplace(BadHashStruct{i});
+    }
+    EXPECT_EQ(ht.size(), uint32_t(kNumElements));
 }

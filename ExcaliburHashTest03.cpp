@@ -15,7 +15,7 @@ template <> struct KeyInfo<CustomStruct>
     static inline CustomStruct getEmpty() noexcept { return CustomStruct{0x7ffffffe}; }
     static inline uint64_t hash(const CustomStruct& /*key*/) noexcept
     {
-        // Note: this is a very bad hash function
+        // Note: this is a very bad hash function causing 100% collisions
         // added intentionally for the test
         return 3;
     }
@@ -28,7 +28,7 @@ TEST(SmFlatHashMap, BadHashFunction)
     Excalibur::HashTable<CustomStruct, int> ht;
     EXPECT_TRUE(ht.empty());
     EXPECT_EQ(ht.size(), 0u);
-    EXPECT_EQ(ht.capacity(), 0u);
+    EXPECT_GE(ht.capacity(), 0u);
 
     const int kNumElements = 500;
     for (int i = 0; i < kNumElements; i++)
@@ -57,6 +57,36 @@ TEST(SmFlatHashMap, BadHashFunction)
     EXPECT_FALSE(e0);
     bool e1 = ht.erase(CustomStruct{-13});
     EXPECT_FALSE(e1);
+}
+
+TEST(SmFlatHashMap, EmplaceEdgeCase)
+{
+    Excalibur::HashTable<CustomStruct, int> ht;
+    EXPECT_TRUE(ht.empty());
+    EXPECT_EQ(ht.size(), 0u);
+    EXPECT_GE(ht.capacity(), 0u);
+
+    const int kNumElements = 40;
+    for (int i = 0; i < kNumElements; i++)
+    {
+        int v = 3 + i;
+        auto it = ht.emplace(CustomStruct{256 * i + 1}, v);
+        EXPECT_TRUE(it.second);
+    }
+
+    // erase half of elements
+    for (int i = 0; i < (kNumElements / 2); i++)
+    {
+        ht.erase(CustomStruct{256 * i + 1});
+    }
+
+    // emplace again
+    for (int i = 0; i < kNumElements; i++)
+    {
+        int v = 3 + i;
+        auto it = ht.emplace(CustomStruct{256 * i + 1}, v);
+        EXPECT_EQ(it.first.value(), v);
+    }
 }
 
 namespace Excalibur
@@ -273,6 +303,47 @@ TEST(SmFlatHashMap, CopyTest)
 
     EXPECT_EQ(ht1.size(), uint32_t(1));
     EXPECT_NE(ht1.find(1), ht1.iend());
+
+
+    Excalibur::HashTable<int, nullptr_t> ht4;
+    ht4.emplace(1);
+    ht4.emplace(2);
+    EXPECT_EQ(ht4.size(), uint32_t(2));
+    EXPECT_TRUE(ht4.has(1));
+    EXPECT_TRUE(ht4.has(2));
+    EXPECT_FALSE(ht4.has(3));
+
+    Excalibur::HashTable<int, nullptr_t> ht5;
+    ht5 = ht4;
+    EXPECT_EQ(ht5.size(), uint32_t(2));
+    EXPECT_TRUE(ht5.has(1));
+    EXPECT_TRUE(ht5.has(2));
+    EXPECT_FALSE(ht5.has(3));
+}
+
+TEST(SmFlatHashMap, CopyEdgeCases)
+{
+    Excalibur::HashTable<int, int> ht1;
+    ht1.emplace(1, -1);
+    ht1.emplace(2, -2);
+    ht1.emplace(3, -3);
+    EXPECT_EQ(ht1.size(), uint32_t(3));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+    EXPECT_NE(ht1.find(2), ht1.iend());
+    EXPECT_NE(ht1.find(3), ht1.iend());
+
+    // assign to self
+    ht1 = ht1;
+    EXPECT_EQ(ht1.size(), uint32_t(3));
+    EXPECT_NE(ht1.find(1), ht1.iend());
+    EXPECT_NE(ht1.find(2), ht1.iend());
+    EXPECT_NE(ht1.find(3), ht1.iend());
+
+    Excalibur::HashTable<int, int> ht2;
+    EXPECT_TRUE(ht2.empty());
+    // assign empty
+    ht1 = ht2;
+    EXPECT_TRUE(ht1.empty());
 }
 
 TEST(SmFlatHashMap, MoveTest)
@@ -295,6 +366,105 @@ TEST(SmFlatHashMap, MoveTest)
 
     EXPECT_EQ(ht3.size(), uint32_t(1));
     EXPECT_NE(ht3.find(1), ht3.iend());
+}
+
+static const int kNumElementsInTinyTable = 1;
+static Excalibur::HashTable<int, int> makeTinyHashTable(int valueOffset = 0)
+{
+    Excalibur::HashTable<int, int> ht;
+    EXPECT_TRUE(ht.empty());
+    for (int i = 0; i < kNumElementsInTinyTable; i++)
+    {
+        ht.emplace(i, i + valueOffset);
+    }
+    EXPECT_EQ(ht.size(), uint32_t(kNumElementsInTinyTable));
+    return ht;
+}
+
+static const int kNumElementsInHugeTable = 1000;
+static Excalibur::HashTable<int, int> makeHugeHashTable()
+{
+    Excalibur::HashTable<int, int> ht;
+    EXPECT_TRUE(ht.empty());
+    for (int i = 0; i < kNumElementsInHugeTable; i++)
+    {
+        ht.emplace(i, i);
+    }
+    EXPECT_EQ(ht.size(), uint32_t(kNumElementsInHugeTable));
+    return ht;
+}
+
+static Excalibur::HashTable<int, int> makeHashTable(int numElements)
+{
+    Excalibur::HashTable<int, int> ht;
+    EXPECT_TRUE(ht.empty());
+    for (int i = 0; i < numElements; i++)
+    {
+        ht.emplace(i, i);
+    }
+    EXPECT_EQ(ht.size(), uint32_t(numElements));
+    return ht;
+}
+
+TEST(SmFlatHashMap, MoveEdgeCases)
+{
+    {
+        // many to one
+        Excalibur::HashTable<int, int> htSmall = makeTinyHashTable();
+        Excalibur::HashTable<int, int> htHuge = makeHugeHashTable();
+        htSmall = std::move(htHuge);
+        EXPECT_EQ(htSmall.size(), uint32_t(kNumElementsInHugeTable));
+    }
+
+    {
+        // one to many
+        Excalibur::HashTable<int, int> htSmall = makeTinyHashTable();
+        Excalibur::HashTable<int, int> htHuge = makeHugeHashTable();
+        htHuge = std::move(htSmall);
+        EXPECT_EQ(htHuge.size(), uint32_t(kNumElementsInTinyTable));
+    }
+
+    {
+        // many to many
+        Excalibur::HashTable<int, int> htHuge1 = makeHugeHashTable();
+        Excalibur::HashTable<int, int> htHuge2 = makeHashTable((kNumElementsInHugeTable - 4));
+        htHuge1 = std::move(htHuge2);
+        EXPECT_EQ(htHuge1.size(), uint32_t((kNumElementsInHugeTable - 4)));
+    }
+
+    {
+        // one to one
+        const int kValueOffset = 13;
+        Excalibur::HashTable<int, int> htSmall1 = makeTinyHashTable();
+        Excalibur::HashTable<int, int> htSmall2 = makeTinyHashTable(kValueOffset);
+        htSmall1 = std::move(htSmall2);
+        EXPECT_EQ(htSmall1.size(), uint32_t(kNumElementsInTinyTable));
+        auto it = htSmall1.ibegin();
+        EXPECT_EQ(it.value(), kValueOffset);
+    }
+
+    {
+        // zero to one
+        Excalibur::HashTable<int, int> htSmall = makeTinyHashTable();
+        Excalibur::HashTable<int, int> htEmpty;
+        htSmall = std::move(htEmpty);
+        EXPECT_EQ(htSmall.size(), uint32_t(0));
+    }
+
+    {
+        // zero to many
+        Excalibur::HashTable<int, int> htHuge = makeHugeHashTable();
+        Excalibur::HashTable<int, int> htEmpty;
+        htHuge = std::move(htEmpty);
+        EXPECT_EQ(htHuge.size(), uint32_t(0));
+    }
+
+    {
+        // move to self
+        Excalibur::HashTable<int, int> htHuge = makeHugeHashTable();
+        htHuge = std::move(htHuge);
+        EXPECT_EQ(htHuge.size(), uint32_t(kNumElementsInHugeTable));
+    }
 }
 
 TEST(SmFlatHashMap, TryToEmplaceDuplicate)
@@ -326,7 +496,7 @@ TEST(SmFlatHashMap, ReserveTest)
 {
     Excalibur::HashTable<int, int> ht;
     EXPECT_TRUE(ht.empty());
-    EXPECT_EQ(ht.capacity(), 0u);
+    EXPECT_GE(ht.capacity(), 0u);
 
     ht.reserve(31);
     EXPECT_TRUE(ht.empty());
