@@ -1,6 +1,9 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
+
+#define EXLBR_UNUSED(x) (void)(x)
+
 struct CustomStruct
 {
     int v = 0;
@@ -227,6 +230,8 @@ void ConstCorrectnessTest(const Excalibur::HashTable<int, int>& ht)
         v = 7;
         */
     }
+
+    EXLBR_UNUSED(sum);
 }
 
 void MutabilityTest(Excalibur::HashTable<int, int>& ht)
