@@ -167,7 +167,7 @@ RAM: 16Gb
 
 Here is the simplest usage example.
 
-```
+```cpp
 #include "ExcaliburHash.h"
 
 int main()
