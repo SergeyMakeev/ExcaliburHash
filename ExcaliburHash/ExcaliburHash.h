@@ -624,7 +624,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace(TK&& key, Args&&... args)
     {
         static_assert(std::is_same<TKey, typename std::remove_const<typename std::remove_reference<TK>::type>::type>::value,
-                      "Expected unversal reference of TKey type");
+                      "Expected unversal reference of TKey type. Wrong key type?");
 
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
