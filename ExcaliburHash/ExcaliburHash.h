@@ -288,40 +288,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
     }
 
-    inline void grow(uint32_t numBucketsNew)
-    {
-        const uint32_t numBuckets = m_numBuckets;
-        TItem* storage = m_storage;
-        TItem* EXLBR_RESTRICT item = storage;
-        TItem* const enditem = item + numBuckets;
-        bool isInlineStorage = isUsingInlineStorage();
-
-        // m_storage = nullptr;
-        // m_numBuckets = 0;
-        create(numBucketsNew);
-
-        for (; item != enditem; item++)
-        {
-            if (item->isValid())
-            {
-                if constexpr (has_values::value)
-                {
-                    emplace(std::move(*item->key()), std::move(*item->value()));
-                }
-                else
-                {
-                    emplace(std::move(*item->key()));
-                }
-            }
-            destruct(item);
-        }
-
-        if (!isInlineStorage)
-        {
-            EXLBR_FREE(storage);
-        }
-    }
-
     [[nodiscard]] inline bool isUsingInlineStorage() const noexcept
     {
         const TItem* inlineStorage = reinterpret_cast<const TItem*>(&m_inlineStorage);
@@ -335,7 +301,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return inlineItem;
     }
 
-    inline void create(uint32_t numBuckets)
+    inline uint32_t create(uint32_t numBuckets)
     {
         numBuckets = (numBuckets < k_MinNumberOfBuckets) ? k_MinNumberOfBuckets : numBuckets;
 
@@ -364,6 +330,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         {
             construct<TItem>(item, TKeyInfo::getEmpty());
         }
+
+        return numBuckets;
     }
 
     inline void destroy()
@@ -621,23 +589,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         m_numElements = 0;
     }
 
-    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace(TK&& key, Args&&... args)
+  private:
+
+    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace_no_grow(uint32_t numBuckets, TK&& key, Args&&... args)
     {
-        static_assert(std::is_same<TKey, typename std::remove_const<typename std::remove_reference<TK>::type>::type>::value,
-                      "Expected unversal reference of TKey type. Wrong key type?");
-
-        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
-        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
-        uint32_t numBuckets = m_numBuckets;
-
-        // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
-        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
-        if (m_numElements > numBucketsThreshold)
-        {
-            grow(numBuckets * 2);
-            numBuckets = m_numBuckets;
-        }
-
         // numBuckets has to be power-of-two
         EXLBR_ASSERT(numBuckets > 0);
         EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
@@ -675,6 +630,71 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             currentItem++;
             currentItem = (currentItem == endItem) ? firstItem : currentItem;
         }
+    }
+
+    template <typename TK, class... Args>
+    inline std::pair<IteratorKV, bool> grow_and_emplace(uint32_t numBucketsNew, TK&& key, Args&&... args)
+    {
+        const uint32_t numBuckets = m_numBuckets;
+        TItem* storage = m_storage;
+        TItem* EXLBR_RESTRICT item = storage;
+        TItem* const enditem = item + numBuckets;
+        bool isInlineStorage = isUsingInlineStorage();
+
+        numBucketsNew = create(numBucketsNew);
+
+        //
+        // insert a new element (one of the args might still point to the old storage in case of hash table 'aliasing'
+        //
+        // i.e.
+        // auto it = table.find("key");
+        // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
+        auto it = emplace_no_grow(numBucketsNew, key, args...);
+
+        // re-insert existing elements
+        for (; item != enditem; item++)
+        {
+            if (item->isValid())
+            {
+                if constexpr (has_values::value)
+                {
+                    emplace_no_grow(numBucketsNew, std::move(*item->key()), std::move(*item->value()));
+                }
+                else
+                {
+                    emplace_no_grow(numBucketsNew, std::move(*item->key()));
+                }
+            }
+            destruct(item);
+        }
+
+        if (!isInlineStorage)
+        {
+            EXLBR_FREE(storage);
+        }
+
+        return it;
+    }
+
+
+  public:
+    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace(TK&& key, Args&&... args)
+    {
+        static_assert(std::is_same<TKey, typename std::remove_const<typename std::remove_reference<TK>::type>::type>::value,
+                      "Expected unversal reference of TKey type. Wrong key type?");
+
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
+        uint32_t numBuckets = m_numBuckets;
+
+        // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
+        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
+        if (m_numElements > numBucketsThreshold)
+        {
+            return grow_and_emplace(numBuckets * 2, key, args...);
+        }
+
+        return emplace_no_grow(numBuckets, key, args...);
     }
 
     [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept
@@ -728,14 +748,44 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return erase(it);
     }
 
-    inline bool reserve(uint32_t numBuckets)
+    inline bool reserve(uint32_t numBucketsNew)
     {
-        if (numBuckets == 0 || numBuckets < capacity())
+        if (numBucketsNew == 0 || numBucketsNew < capacity())
         {
             return false;
         }
-        numBuckets = nextPow2(numBuckets);
-        grow(numBuckets);
+        numBucketsNew = nextPow2(numBucketsNew);
+
+        const uint32_t numBuckets = m_numBuckets;
+        TItem* storage = m_storage;
+        TItem* EXLBR_RESTRICT item = storage;
+        TItem* const enditem = item + numBuckets;
+        bool isInlineStorage = isUsingInlineStorage();
+
+        numBucketsNew = create(numBucketsNew);
+
+        // re-insert existing elements
+        for (; item != enditem; item++)
+        {
+            if (item->isValid())
+            {
+                if constexpr (has_values::value)
+                {
+                    emplace_no_grow(numBucketsNew, std::move(*item->key()), std::move(*item->value()));
+                }
+                else
+                {
+                    emplace_no_grow(numBucketsNew, std::move(*item->key()));
+                }
+            }
+            destruct(item);
+        }
+
+        if (!isInlineStorage)
+        {
+            EXLBR_FREE(storage);
+        }
+
         return true;
     }
 

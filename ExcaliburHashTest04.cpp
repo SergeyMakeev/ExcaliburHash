@@ -6,59 +6,53 @@ struct ComplexValue
 {
     ComplexValue(const ComplexValue& other)
         : isMoved(other.isMoved)
+        , isDeleted(other.isDeleted)
     {
-        /*
-        if (other.isMoved)
-        {
-            int a = 0;
-            a = 7;
-        }
-        */
         EXPECT_FALSE(other.isMoved);
+        EXPECT_FALSE(other.isDeleted);
     }
 
     ComplexValue& operator=(const ComplexValue& other) noexcept
     {
-        /*
-        if (other.isMoved)
-        {
-            int a = 0;
-            a = 7;
-        }
-        */
-
         EXPECT_FALSE(other.isMoved);
+        EXPECT_FALSE(other.isDeleted);
         isMoved = other.isMoved;
+        isDeleted = other.isDeleted;
     }
 
     ComplexValue() noexcept
         : isMoved(false)
+        , isDeleted(false)
     {
     }
 
     ComplexValue(ComplexValue&& other) noexcept
         : isMoved(other.isMoved)
+        , isDeleted(other.isDeleted)
     {
+        EXPECT_FALSE(other.isDeleted);
         other.isMoved = true;
     }
 
-    ~ComplexValue() noexcept {}
+    ~ComplexValue() noexcept { isDeleted = true; }
 
     ComplexValue& operator=(ComplexValue&& other) noexcept
     {
+        isDeleted = other.isDeleted;
         isMoved = other.isMoved;
         other.isMoved = true;
         return *this;
     }
 
     bool isMoved;
+    bool isDeleted;
 };
 
 TEST(SmFlatHashMap, InsertFromItselfWhileGrow)
 {
     for (int i = 1; i <= 1000; i++)
     {
-        //printf("Step %d\n", i);
+        // printf("Step %d\n", i);
 
         // create hash map and insert one element
         Excalibur::HashTable<int, ComplexValue> ht;
