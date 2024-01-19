@@ -49,6 +49,7 @@ struct ComplexValue
     bool isDeleted;
 };
 
+
 TEST(SmFlatHashMap, InsertFromItselfWhileGrow)
 {
     for (int i = 1; i <= 1000; i++)

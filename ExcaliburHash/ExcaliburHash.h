@@ -590,8 +590,8 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     }
 
   private:
-
-    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace_no_grow(uint32_t numBuckets, TK&& key, Args&&... args)
+    template <typename TK, class... Args>
+    inline std::pair<IteratorKV, bool> emplaceToExisting(uint32_t numBuckets, TK&& key, Args&&... args)
     {
         // numBuckets has to be power-of-two
         EXLBR_ASSERT(numBuckets > 0);
@@ -632,8 +632,28 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         }
     }
 
+    inline void reinsert(uint32_t numBucketsNew, TItem* EXLBR_RESTRICT item, TItem* const enditem) noexcept
+    {
+        // re-insert existing elements
+        for (; item != enditem; item++)
+        {
+            if (item->isValid())
+            {
+                if constexpr (has_values::value)
+                {
+                    emplaceToExisting(numBucketsNew, std::move(*item->key()), std::move(*item->value()));
+                }
+                else
+                {
+                    emplaceToExisting(numBucketsNew, std::move(*item->key()));
+                }
+            }
+            destruct(item);
+        }
+    }
+
     template <typename TK, class... Args>
-    inline std::pair<IteratorKV, bool> grow_and_emplace(uint32_t numBucketsNew, TK&& key, Args&&... args)
+    inline std::pair<IteratorKV, bool> emplaceReallocate(uint32_t numBucketsNew, TK&& key, Args&&... args)
     {
         const uint32_t numBuckets = m_numBuckets;
         TItem* storage = m_storage;
@@ -649,24 +669,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         // i.e.
         // auto it = table.find("key");
         // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
-        auto it = emplace_no_grow(numBucketsNew, key, args...);
+        auto it = emplaceToExisting(numBucketsNew, key, args...);
 
-        // re-insert existing elements
-        for (; item != enditem; item++)
-        {
-            if (item->isValid())
-            {
-                if constexpr (has_values::value)
-                {
-                    emplace_no_grow(numBucketsNew, std::move(*item->key()), std::move(*item->value()));
-                }
-                else
-                {
-                    emplace_no_grow(numBucketsNew, std::move(*item->key()));
-                }
-            }
-            destruct(item);
-        }
+        reinsert(numBucketsNew, item, enditem);
 
         if (!isInlineStorage)
         {
@@ -675,7 +680,6 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         return it;
     }
-
 
   public:
     template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplace(TK&& key, Args&&... args)
@@ -691,10 +695,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
         if (m_numElements > numBucketsThreshold)
         {
-            return grow_and_emplace(numBuckets * 2, key, args...);
+            return emplaceReallocate(numBuckets * 2, key, args...);
         }
 
-        return emplace_no_grow(numBuckets, key, args...);
+        return emplaceToExisting(numBuckets, key, args...);
     }
 
     [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept
@@ -764,22 +768,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         numBucketsNew = create(numBucketsNew);
 
-        // re-insert existing elements
-        for (; item != enditem; item++)
-        {
-            if (item->isValid())
-            {
-                if constexpr (has_values::value)
-                {
-                    emplace_no_grow(numBucketsNew, std::move(*item->key()), std::move(*item->value()));
-                }
-                else
-                {
-                    emplace_no_grow(numBucketsNew, std::move(*item->key()));
-                }
-            }
-            destruct(item);
-        }
+        reinsert(numBucketsNew, item, enditem);
 
         if (!isInlineStorage)
         {
