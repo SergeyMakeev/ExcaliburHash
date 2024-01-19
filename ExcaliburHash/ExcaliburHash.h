@@ -36,6 +36,23 @@
     #define EXLBR_RESTRICT __restrict
 #endif
 
+#if defined(__GNUC__)
+    #if !defined(EXLBR_LIKELY)
+        #define EXLBR_LIKELY(x) __builtin_expect(!!(x), 1)
+    #endif
+    #if !defined(EXLBR_UNLIKELY)
+        #define EXLBR_UNLIKELY(x) __builtin_expect(!!(x), 0)
+    #endif
+#else
+    #if !defined(EXLBR_LIKELY)
+        #define EXLBR_LIKELY(x) (x)
+    #endif
+    #if !defined(EXLBR_UNLIKELY)
+        #define EXLBR_UNLIKELY(x) (x)
+    #endif
+#endif
+
+
 namespace Excalibur
 {
 
@@ -371,15 +388,16 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         TItem* EXLBR_RESTRICT currentItem = startItem;
         do
         {
+            if (EXLBR_LIKELY(currentItem->isEqual(key)))
+            {
+                return currentItem;
+            }
+
             if (currentItem->isEmpty())
             {
                 return endItem;
             }
 
-            if (currentItem->isEqual(key))
-            {
-                return currentItem;
-            }
             currentItem++;
             currentItem = (currentItem == endItem) ? firstItem : currentItem;
         } while (currentItem != startItem);
@@ -693,12 +711,11 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
         // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
         const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
-        if (m_numElements > numBucketsThreshold)
+        if (EXLBR_LIKELY(m_numElements <= numBucketsThreshold))
         {
-            return emplaceReallocate(numBuckets * 2, key, args...);
+            return emplaceToExisting(numBuckets, key, args...);
         }
-
-        return emplaceToExisting(numBuckets, key, args...);
+        return emplaceReallocate(numBuckets * 2, key, args...);
     }
 
     [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept
