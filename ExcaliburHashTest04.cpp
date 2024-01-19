@@ -18,6 +18,7 @@ struct ComplexValue
         EXPECT_FALSE(other.isDeleted);
         isMoved = other.isMoved;
         isDeleted = other.isDeleted;
+        return *this;
     }
 
     ComplexValue() noexcept
