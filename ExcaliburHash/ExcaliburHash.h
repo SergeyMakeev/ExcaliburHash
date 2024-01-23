@@ -52,7 +52,6 @@
     #endif
 #endif
 
-
 namespace Excalibur
 {
 
@@ -419,6 +418,15 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return m_item->value();
         }
 
+        static TItem* getNextValidItem(TItem* item, TItem* endItem) noexcept
+        {
+            do
+            {
+                item++;
+            } while (item < endItem && !item->isValid());
+            return item;
+        }
+
       public:
         IteratorBase() = delete;
 
@@ -442,13 +450,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         IteratorBase& operator++() noexcept
         {
             TItem* endItem = m_ht->m_storage + m_ht->m_numBuckets;
-            TItem* EXLBR_RESTRICT item = m_item;
-            do
-            {
-                item++;
-            } while (item < endItem && !item->isValid());
-
-            m_item = item;
+            m_item = getNextValidItem(m_item, endItem);
             return *this;
         }
 
@@ -729,11 +731,14 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return IteratorKV(this, item);
     }
 
-    inline bool erase(const IteratorBase it)
+    inline TItem* eraseImpl(const IteratorBase it)
     {
+        TItem* EXLBR_RESTRICT item = m_storage;
+        TItem* const endItem = item + m_numBuckets;
+
         if (it == IteratorHelper<IteratorBase>::end(*this))
         {
-            return false;
+            return endItem;
         }
 
         EXLBR_ASSERT(m_numElements != 0);
@@ -748,25 +753,72 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         // hash table now is empty. convert all tombstones to empty keys
         if (m_numElements == 0)
         {
-            TItem* EXLBR_RESTRICT item = m_storage;
-            TItem* const endItem = item + m_numBuckets;
             for (; item != endItem; item++)
             {
                 *item->key() = TKeyInfo::getEmpty();
             }
-            return true;
+            return endItem;
         }
 
         // overwrite key with empty key
         TKey* itemKey = const_cast<TKey*>(it.getKey());
         *itemKey = TKeyInfo::getTombstone();
-        return true;
+        return IteratorBase::getNextValidItem(it.m_item, endItem);
     }
+
+    inline IteratorKV erase(const IteratorKV& it)
+    {
+        TItem* item = eraseImpl(it);
+        return IteratorKV(this, item);
+    }
+
+    inline ConstIteratorKV erase(const ConstIteratorKV& it)
+    {
+        TItem* item = eraseImpl(it);
+        return ConstIteratorKV(this, item);
+    }
+
+    /*
+        inline bool erase(const IteratorBase it)
+        {
+            if (it == IteratorHelper<IteratorBase>::end(*this))
+            {
+                return false;
+            }
+
+            EXLBR_ASSERT(m_numElements != 0);
+            m_numElements--;
+
+            if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
+            {
+                TValue* itemValue = const_cast<TValue*>(it.getValue());
+                destruct(itemValue);
+            }
+
+            // hash table now is empty. convert all tombstones to empty keys
+            if (m_numElements == 0)
+            {
+                TItem* EXLBR_RESTRICT item = m_storage;
+                TItem* const endItem = item + m_numBuckets;
+                for (; item != endItem; item++)
+                {
+                    *item->key() = TKeyInfo::getEmpty();
+                }
+                return true;
+            }
+
+            // overwrite key with empty key
+            TKey* itemKey = const_cast<TKey*>(it.getKey());
+            *itemKey = TKeyInfo::getTombstone();
+            return true;
+        }
+    */
 
     inline bool erase(const TKey& key)
     {
         auto it = find(key);
-        return erase(it);
+        erase(it);
+        return (it != iend());
     }
 
     inline bool reserve(uint32_t numBucketsNew)

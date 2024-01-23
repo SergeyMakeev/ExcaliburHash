@@ -116,13 +116,18 @@ TEST(SmFlatHashMap, CopyableIterators)
     ++it2;
     EXPECT_NE(it, it2);
 
+    it2 = it;
+    EXPECT_EQ(it, it2);
+
+/*
     printf("pass1\n");
-    for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    for (Excalibur::HashTable<std::string, std::string>::IteratorKV it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
     {
         printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
         if (_stricmp(it3->first.get().c_str(), "5") == 0)
         {
-            ht.erase(it3);
+            ht.eraseImpl(it3);
+            auto it33 = ht.erase(it3);
         }
 
         if (_stricmp(it3->first.get().c_str(), "9") == 0)
@@ -136,4 +141,5 @@ TEST(SmFlatHashMap, CopyableIterators)
     {
         printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
     }
+*/
 }
