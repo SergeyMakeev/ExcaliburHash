@@ -1,6 +1,7 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 #include <array>
+#include <cstring>
 
 namespace Excalibur
 {
