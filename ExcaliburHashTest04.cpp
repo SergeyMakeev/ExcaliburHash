@@ -97,11 +97,13 @@ TEST(SmFlatHashMap, CopyableIterators)
 {
     Excalibur::HashTable<std::string, std::string> ht;
 
-    for (int i = 1; i < 16; i++)
+    int sum = 0;
+    for (int i = 1; i <= 16; i++)
     {
-        ht.emplace(std::to_string(i), std::to_string(i+1));
+        ht.emplace(std::to_string(i), std::to_string(i + 1));
+        sum += i;
     }
-    
+
     Excalibur::HashTable<std::string, std::string>::IteratorKV it = ht.find(std::to_string(1));
     ASSERT_NE(it, ht.end());
     const std::string& val = it->second;
@@ -119,27 +121,58 @@ TEST(SmFlatHashMap, CopyableIterators)
     it2 = it;
     EXPECT_EQ(it, it2);
 
-/*
-    printf("pass1\n");
-    for (Excalibur::HashTable<std::string, std::string>::IteratorKV it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    // capture before state
+    std::vector<std::string> before;
     {
-        printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
-        if (_stricmp(it3->first.get().c_str(), "5") == 0)
+        for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
         {
-            ht.eraseImpl(it3);
-            auto it33 = ht.erase(it3);
+            before.emplace_back(it3->first);
         }
+        std::sort(before.begin(), before.end());
+    }
 
-        if (_stricmp(it3->first.get().c_str(), "9") == 0)
+
+    // iterate and remove
+    {
+        for (Excalibur::HashTable<std::string, std::string>::IteratorKV it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
         {
-            ht.erase(it3);
+            if (_stricmp(it3->first.get().c_str(), "5") == 0)
+            {
+                it3 = ht.erase(it3);
+            }
+
+            if (_stricmp(it3->first.get().c_str(), "9") == 0)
+            {
+                it3 = ht.erase(it3);
+            }
         }
     }
 
-    printf("pass2\n");
-    for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    // capture after state
+    std::vector<std::string> after;
     {
-        printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
+        for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+        {
+            after.emplace_back(it3->first);
+        }
+
+        std::sort(after.begin(), after.end());
     }
-*/
+
+    // make sure we've got the expected results
+    int sumBefore = 0;
+    for (const std::string& v : before)
+    {
+        int iv = std::stoi(v);
+        sumBefore += iv;
+    }
+    EXPECT_EQ(sumBefore, sum);
+
+    int sumAfter = 0;
+    for (const std::string& v : after)
+    {
+        int iv = std::stoi(v);
+        sumAfter += iv;
+    }
+    EXPECT_EQ(sumBefore-5-9, sumAfter);
 }

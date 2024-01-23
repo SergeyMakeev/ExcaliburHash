@@ -427,6 +427,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return item;
         }
 
+        void copyFrom(const IteratorBase& other)
+        {
+            m_ht = other.m_ht;
+            m_item = other.m_item;
+        }
+
       public:
         IteratorBase() = delete;
 
@@ -535,6 +541,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
       public:
         TIteratorKV() = delete;
+
+        TIteratorKV& operator=(const TIteratorKV& other) noexcept
+        {
+            IteratorBase::copyFrom(other);
+            return *this;
+        }
 
         TIteratorKV(const HashTable* ht, TItem* item) noexcept
             : IteratorBase(ht, item)
