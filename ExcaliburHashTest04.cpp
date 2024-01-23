@@ -136,12 +136,12 @@ TEST(SmFlatHashMap, CopyableIterators)
     {
         for (Excalibur::HashTable<std::string, std::string>::IteratorKV it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
         {
-            if (_stricmp(it3->first.get().c_str(), "5") == 0)
+            if (std::strcmp(it3->first.get().c_str(), "5") == 0)
             {
                 it3 = ht.erase(it3);
             }
 
-            if (_stricmp(it3->first.get().c_str(), "9") == 0)
+            if (std::strcmp(it3->first.get().c_str(), "9") == 0)
             {
                 it3 = ht.erase(it3);
             }
