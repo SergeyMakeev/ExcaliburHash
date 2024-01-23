@@ -2,6 +2,22 @@
 #include "gtest/gtest.h"
 #include <array>
 
+namespace Excalibur
+{
+template <> struct KeyInfo<std::string>
+{
+    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
+    static inline std::string getTombstone() noexcept
+    {
+        // and let's hope that small string optimization will do the job
+        return std::string(1, char(1));
+    }
+    static inline std::string getEmpty() noexcept { return std::string(); }
+    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
+    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
+};
+} // namespace Excalibur
+
 struct ComplexValue
 {
     ComplexValue(const ComplexValue& other)
@@ -49,7 +65,6 @@ struct ComplexValue
     bool isDeleted;
 };
 
-
 TEST(SmFlatHashMap, InsertFromItselfWhileGrow)
 {
     for (int i = 1; i <= 1000; i++)
@@ -75,5 +90,50 @@ TEST(SmFlatHashMap, InsertFromItselfWhileGrow)
 
         auto it2 = ht.find(-1);
         ASSERT_NE(it2, ht.end());
+    }
+}
+
+TEST(SmFlatHashMap, CopyableIterators)
+{
+    Excalibur::HashTable<std::string, std::string> ht;
+
+    for (int i = 1; i < 16; i++)
+    {
+        ht.emplace(std::to_string(i), std::to_string(i+1));
+    }
+    
+    Excalibur::HashTable<std::string, std::string>::IteratorKV it = ht.find(std::to_string(1));
+    ASSERT_NE(it, ht.end());
+    const std::string& val = it->second;
+
+    Excalibur::HashTable<std::string, std::string>::IteratorKV it2 = it;
+    ASSERT_NE(it2, ht.end());
+    const std::string& val2 = it2->second;
+
+    EXPECT_EQ(it, it2);
+    EXPECT_EQ(val, val2);
+
+    ++it2;
+    EXPECT_NE(it, it2);
+
+    printf("pass1\n");
+    for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    {
+        printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
+        if (_stricmp(it3->first.get().c_str(), "5") == 0)
+        {
+            ht.erase(it3);
+        }
+
+        if (_stricmp(it3->first.get().c_str(), "9") == 0)
+        {
+            ht.erase(it3);
+        }
+    }
+
+    printf("pass2\n");
+    for (auto it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
+    {
+        printf("%s:%s\n", it3->first.get().c_str(), it3->second.get().c_str());
     }
 }
