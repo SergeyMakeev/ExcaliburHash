@@ -436,6 +436,12 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         IteratorBase() = delete;
 
+        IteratorBase(const IteratorBase& other) noexcept
+            : m_ht(other.m_ht)
+            , m_item(other.m_item)
+        {
+        }
+
         IteratorBase(const HashTable* ht, TItem* item) noexcept
             : m_ht(ht)
             , m_item(item)
@@ -542,9 +548,16 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       public:
         TIteratorKV() = delete;
 
+        TIteratorKV(const TIteratorKV& other)
+            : IteratorBase(other)
+            , tmpKv(reference<const TKey>(nullptr), reference<TIteratorValue>(nullptr))
+        {
+        }
+
         TIteratorKV& operator=(const TIteratorKV& other) noexcept
         {
             IteratorBase::copyFrom(other);
+            // note: we'll automatically update tmpKv on the next access = no need to copy
             return *this;
         }
 
