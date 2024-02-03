@@ -18,6 +18,7 @@ set(TEST_SOURCES
   ExcaliburHashTest02.cpp
   ExcaliburHashTest03.cpp
   ExcaliburHashTest04.cpp
+  ExcaliburHashTest05.cpp
 )
 
 set (TEST_EXE_NAME ${PROJ_NAME})

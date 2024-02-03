@@ -112,7 +112,7 @@ TODO: Design descisions/principles
 TODO: Memory layout
 
 */
-template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> class HashTable
+template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>, unsigned kNumInlineItems = 1> class HashTable
 {
     struct has_values : std::bool_constant<!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value>
     {
@@ -241,7 +241,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         if (!other.isUsingInlineStorage())
         {
             // if not using inline storage than it's a simple pointer swap
-            allocateInline(TKeyInfo::getEmpty());
+            constructInline(TKeyInfo::getEmpty());
             m_storage = other.m_storage;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
@@ -252,23 +252,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         else
         {
             // if using inline storage than let's move items from one inline storage into another
-            TItem* otherInlineItem = reinterpret_cast<TItem*>(&other.m_inlineStorage);
-            bool hasValidValue = otherInlineItem->isValid();
-            TItem* inlineItem = allocateInline(std::move(*otherInlineItem->key()));
+            TItem* otherInlineItems = reinterpret_cast<TItem*>(&other.m_inlineStorage);
+            TItem* inlineItems = moveInline(otherInlineItems);
 
-            if constexpr (has_values::value)
-            {
-                // move inline storage value (if any)
-                if (hasValidValue)
-                {
-                    TValue* value = inlineItem->value();
-                    TValue* otherValue = otherInlineItem->value();
-                    construct<TValue>(value, std::move(*otherValue));
-                    destruct(otherValue);
-                }
-            }
-
-            m_storage = inlineItem;
+            m_storage = inlineItems;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
             // destruct(otherInlineItem);
@@ -310,11 +297,50 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
         return (inlineStorage == m_storage);
     }
 
-    template <class... Args> inline TItem* allocateInline(Args&&... args)
+    template <class... Args> inline TItem* constructInline(Args&&... args)
     {
-        TItem* inlineItem = reinterpret_cast<TItem*>(&m_inlineStorage);
-        construct<TItem>(inlineItem, std::forward<Args>(args)...);
-        return inlineItem;
+        TItem* inlineItems = reinterpret_cast<TItem*>(&m_inlineStorage);
+        for (unsigned i = 0; i < kNumInlineItems; i++)
+        {
+            construct<TItem>((inlineItems + i), std::forward<Args>(args)...);
+        }
+        return inlineItems;
+    }
+
+    inline TItem* moveInline(TItem* from)
+    {
+        TItem* inlineItems = reinterpret_cast<TItem*>(&m_inlineStorage);
+
+        if constexpr (has_values::value)
+        {
+            // move all keys and valid values
+            for (unsigned i = 0; i < kNumInlineItems; i++)
+            {
+                TItem* inlineItem = (inlineItems + i);
+                TItem& otherInlineItem = from[i];
+                const bool hasValidValue = otherInlineItem.isValid();
+                construct<TItem>((inlineItems + i), std::move(*otherInlineItem.key()));
+                
+                // move inline storage value (if any)
+                if (hasValidValue)
+                {
+                    TValue* value = inlineItem->value();
+                    TValue* otherValue = otherInlineItem.value();
+                    construct<TValue>(value, std::move(*otherValue));
+                    destruct(otherValue);
+                }
+            }
+        }
+        else
+        {
+            // move only keys 
+            for (unsigned i = 0; i < kNumInlineItems; i++)
+            {
+                construct<TItem>((inlineItems + i), std::move(*from[i].key()));
+            }
+        }
+
+        return inlineItems;
     }
 
     inline uint32_t create(uint32_t numBuckets)
@@ -476,7 +502,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
       protected:
         const HashTable* m_ht;
         TItem* m_item;
-        friend class HashTable<TKey, TValue, TKeyInfo>;
+        friend class HashTable<TKey, TValue, TKeyInfo, kNumInlineItems>;
     };
 
     class IteratorK : public IteratorBase
@@ -592,10 +618,10 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     HashTable() noexcept
         //: m_storage(nullptr)
-        : m_numBuckets(1)
+        : m_numBuckets(kNumInlineItems)
         , m_numElements(0)
     {
-        m_storage = allocateInline(TKeyInfo::getEmpty());
+        m_storage = constructInline(TKeyInfo::getEmpty());
     }
 
     ~HashTable()
@@ -933,7 +959,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
     HashTable(const HashTable& other)
     {
         EXLBR_ASSERT(&other != this);
-        m_storage = allocateInline(TKeyInfo::getEmpty());
+        m_storage = constructInline(TKeyInfo::getEmpty());
         create(other.m_numBuckets);
         copyFrom(other);
     }
@@ -946,7 +972,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
             return *this;
         }
         destroyAndFreeMemory();
-        m_storage = allocateInline(TKeyInfo::getEmpty());
+        m_storage = constructInline(TKeyInfo::getEmpty());
         create(other.m_numBuckets);
         copyFrom(other);
         return *this;
@@ -982,8 +1008,9 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>> cla
 
     // We need this inline storage to keep `m_storage` not null all the time.
     // This will save us from `empty()` check inside `find()` function implementation
-    typename std::aligned_storage<sizeof(TItem), alignof(TItem)>::type m_inlineStorage;
-    static_assert(sizeof(m_inlineStorage) == sizeof(TItem), "Incorrect sizeof");
+    static_assert(kNumInlineItems != 0, "Num inline items can't be zero!");
+    typename std::aligned_storage<sizeof(TItem) * kNumInlineItems, alignof(TItem)>::type m_inlineStorage;
+    static_assert(sizeof(m_inlineStorage) == (sizeof(TItem) * kNumInlineItems), "Incorrect sizeof");
 };
 
 } // namespace Excalibur
