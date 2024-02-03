@@ -60,7 +60,7 @@ TEST(SmFlatHashMap, CtorDtorCallCount)
 
     {
         // empty hash table
-        Excalibur::HashTable<ComplexStruct, int, Excalibur::KeyInfo<ComplexStruct>, 4> ht;
+        Excalibur::HashTable<ComplexStruct, int, 4> ht;
         EXPECT_TRUE(ht.empty());
         EXPECT_EQ(ht.size(), 0u);
         EXPECT_GE(ht.capacity(), 0u);

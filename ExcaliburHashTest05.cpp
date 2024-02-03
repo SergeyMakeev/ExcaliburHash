@@ -22,7 +22,7 @@ template <> struct KeyInfo<std::string>
 TEST(SmFlatHashMap, InlineStorageTest01)
 {
     // create hash map and insert one element
-    Excalibur::HashTable<std::string, std::string, Excalibur::KeyInfo<std::string>, 4> ht;
+    Excalibur::HashTable<std::string, std::string, 8> ht;
 
     EXPECT_GE(ht.capacity(), uint32_t(4));
 

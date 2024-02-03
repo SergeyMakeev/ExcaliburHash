@@ -112,7 +112,7 @@ TODO: Design descisions/principles
 TODO: Memory layout
 
 */
-template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>, unsigned kNumInlineItems = 1> class HashTable
+template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename TKeyInfo = KeyInfo<TKey>> class HashTable
 {
     struct has_values : std::bool_constant<!std::is_same<std::nullptr_t, typename std::remove_reference<TValue>::type>::value>
     {
@@ -502,7 +502,7 @@ template <typename TKey, typename TValue, typename TKeyInfo = KeyInfo<TKey>, uns
       protected:
         const HashTable* m_ht;
         TItem* m_item;
-        friend class HashTable<TKey, TValue, TKeyInfo, kNumInlineItems>;
+        friend class HashTable<TKey, TValue, kNumInlineItems, TKeyInfo>;
     };
 
     class IteratorK : public IteratorBase
