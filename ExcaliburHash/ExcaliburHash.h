@@ -320,7 +320,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 TItem& otherInlineItem = from[i];
                 const bool hasValidValue = otherInlineItem.isValid();
                 construct<TItem>((inlineItems + i), std::move(*otherInlineItem.key()));
-                
+
                 // move inline storage value (if any)
                 if (hasValidValue)
                 {
@@ -333,7 +333,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         }
         else
         {
-            // move only keys 
+            // move only keys
             for (unsigned i = 0; i < kNumInlineItems; i++)
             {
                 construct<TItem>((inlineItems + i), std::move(*from[i].key()));
@@ -1006,9 +1006,16 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
     uint32_t m_numBuckets;  // 4
     uint32_t m_numElements; // 4
 
+    template <typename INTEGRAL_TYPE> inline static constexpr bool isPow2(INTEGRAL_TYPE x) noexcept
+    {
+        static_assert(std::is_integral<INTEGRAL_TYPE>::value, "isPow2 must be called on an integer type.");
+        return (x & (x - 1)) == 0 && (x != 0);
+    }
+
     // We need this inline storage to keep `m_storage` not null all the time.
     // This will save us from `empty()` check inside `find()` function implementation
     static_assert(kNumInlineItems != 0, "Num inline items can't be zero!");
+    static_assert(isPow2(kNumInlineItems), "Num inline items should be power of two");
     typename std::aligned_storage<sizeof(TItem) * kNumInlineItems, alignof(TItem)>::type m_inlineStorage;
     static_assert(sizeof(m_inlineStorage) == (sizeof(TItem) * kNumInlineItems), "Incorrect sizeof");
 };
