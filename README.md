@@ -14,6 +14,14 @@ It uses an open addressing hash table and manages removed items with a method ca
 Engineered for ease of use, Excalibur Hash, in a vast majority of cases (99%), serves as a seamless, drop-in alternative to std::unordered_map. However, it's important to note that Excalibur Hash does not guarantee stable addressing.
 So, if your project needs to hold direct pointers to the keys or values, Excalibur Hash might not work as you expect. This aside, its design and efficiency make it a great choice for applications where speed is crucial.
 
+## Features
+
+1. Extremely fast (see Performance section for details)
+2. CPU cache friendly
+3. Built-in configurable inline storage
+4. Can either work as a map (key, value) or as a set (keys only)
+
+
 ## Performance
 
 In this section, you can see a performance comparison against a few popular hash table implementations.
