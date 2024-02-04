@@ -258,7 +258,6 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             m_storage = inlineItems;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
-            // destruct(otherInlineItem);
             other.m_storage = nullptr;
             // other.m_numBuckets = 0;
             // other.m_numElements = 0;
@@ -327,7 +326,11 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                     TValue* value = inlineItem->value();
                     TValue* otherValue = otherInlineItem.value();
                     construct<TValue>(value, std::move(*otherValue));
-                    destruct(otherValue);
+
+                    if constexpr (!std::is_trivially_destructible<TValue>::value)
+                    {
+                        destruct(otherValue);
+                    }
                 }
             }
         }
@@ -828,42 +831,6 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         TItem* item = eraseImpl(it);
         return ConstIteratorKV(this, item);
     }
-
-    /*
-        inline bool erase(const IteratorBase it)
-        {
-            if (it == IteratorHelper<IteratorBase>::end(*this))
-            {
-                return false;
-            }
-
-            EXLBR_ASSERT(m_numElements != 0);
-            m_numElements--;
-
-            if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
-            {
-                TValue* itemValue = const_cast<TValue*>(it.getValue());
-                destruct(itemValue);
-            }
-
-            // hash table now is empty. convert all tombstones to empty keys
-            if (m_numElements == 0)
-            {
-                TItem* EXLBR_RESTRICT item = m_storage;
-                TItem* const endItem = item + m_numBuckets;
-                for (; item != endItem; item++)
-                {
-                    *item->key() = TKeyInfo::getEmpty();
-                }
-                return true;
-            }
-
-            // overwrite key with empty key
-            TKey* itemKey = const_cast<TKey*>(it.getKey());
-            *itemKey = TKeyInfo::getTombstone();
-            return true;
-        }
-    */
 
     inline bool erase(const TKey& key)
     {
