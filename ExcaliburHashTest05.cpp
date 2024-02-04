@@ -62,3 +62,49 @@ TEST(SmFlatHashMap, InlineStorageTest01)
         ASSERT_EQ(val2, "world2");
     }
 }
+
+
+TEST(SmFlatHashMap, AliasNameTest)
+{
+    {
+        Excalibur::HashMap<int, int> hm;
+        auto it1 = hm.emplace(1, 2);
+        EXPECT_TRUE(it1.second);
+        auto it2 = hm.emplace(2, 3);
+        EXPECT_TRUE(it2.second);
+
+        auto _it1 = hm.find(1);
+        ASSERT_NE(_it1, hm.end());
+
+        auto _it2 = hm.find(2);
+        ASSERT_NE(_it2, hm.end());
+
+        auto _it3 = hm.find(3);
+        ASSERT_EQ(_it3, hm.end());
+
+        const int& val1 = _it1->second;
+        const int& val2 = _it2->second;
+        ASSERT_EQ(val1, 2);
+        ASSERT_EQ(val2, 3);
+    }
+
+    {
+        Excalibur::HashSet<int> hs;
+        auto it1 = hs.emplace(1);
+        EXPECT_TRUE(it1.second);
+        auto it2 = hs.emplace(1);
+        EXPECT_FALSE(it2.second);
+        auto it3 = hs.emplace(2);
+        EXPECT_TRUE(it3.second);
+
+        EXPECT_TRUE(hs.has(1));
+        EXPECT_TRUE(hs.has(2));
+        EXPECT_FALSE(hs.has(3));
+    }
+
+
+
+
+
+
+}

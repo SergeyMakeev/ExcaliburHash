@@ -733,6 +733,15 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         TItem* storage = m_storage;
         TItem* EXLBR_RESTRICT item = storage;
         TItem* const enditem = item + numBuckets;
+
+        // check if such element is already exist
+        // in this case we don't need to do anything
+        TItem* existingItem = findImpl(key);
+        if (existingItem != enditem)
+        {
+            return std::make_pair(IteratorKV(this, existingItem), false);
+        }
+
         bool isInlineStorage = isUsingInlineStorage();
 
         numBucketsNew = create(numBucketsNew);
@@ -743,7 +752,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         // i.e.
         // auto it = table.find("key");
         // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
-        auto it = emplaceToExisting(numBucketsNew, key, args...);
+        std::pair<IteratorKV, bool> it = emplaceToExisting(numBucketsNew, key, args...);
 
         reinsert(numBucketsNew, item, enditem);
 
@@ -873,14 +882,6 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
     inline TValue& operator[](const TKey& key)
     {
-        IteratorKV it = find(key);
-        if (it != iend())
-        {
-            return it.value();
-        }
-        // note: we can not use `emplace()` without calling `find()` function first
-        // because calling `emplace()` function might grow the hash table even if a key exists in the table (which will invalidate existing
-        // iterators)
         std::pair<IteratorKV, bool> emplaceIt = emplace(key);
         return emplaceIt.first.value();
     }
@@ -986,5 +987,11 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
     typename std::aligned_storage<sizeof(TItem) * kNumInlineItems, alignof(TItem)>::type m_inlineStorage;
     static_assert(sizeof(m_inlineStorage) == (sizeof(TItem) * kNumInlineItems), "Incorrect sizeof");
 };
+
+// hashmap declaration
+template <typename TKey, typename TValue> using HashMap = HashTable<TKey, TValue, 1, KeyInfo<TKey>>;
+
+// hashset declaration
+template <typename TKey> using HashSet = HashTable<TKey, nullptr_t, 1, KeyInfo<TKey>>;
 
 } // namespace Excalibur
