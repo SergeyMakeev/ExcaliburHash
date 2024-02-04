@@ -992,6 +992,6 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 template <typename TKey, typename TValue> using HashMap = HashTable<TKey, TValue, 1, KeyInfo<TKey>>;
 
 // hashset declaration
-template <typename TKey> using HashSet = HashTable<TKey, nullptr_t, 1, KeyInfo<TKey>>;
+template <typename TKey> using HashSet = HashTable<TKey, std::nullptr_t, 1, KeyInfo<TKey>>;
 
 } // namespace Excalibur
