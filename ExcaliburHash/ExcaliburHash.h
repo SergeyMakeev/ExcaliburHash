@@ -237,15 +237,15 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
     inline void moveFrom(HashTable&& other)
     {
         // note: the current hash table is supposed to be destroyed/non-initialized
-
         if (!other.isUsingInlineStorage())
         {
-            // if not using inline storage than it's a simple pointer swap
+            // if we are not using inline storage than it's a simple pointer swap
             constructInline(TKeyInfo::getEmpty());
             m_storage = other.m_storage;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
             other.m_storage = nullptr;
+            // don't need to zero rest of the members because dtor doesn't use them
             // other.m_numBuckets = 0;
             // other.m_numElements = 0;
         }
@@ -258,7 +258,8 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             m_storage = inlineItems;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
-            other.m_storage = nullptr;
+            // note: other's online items will be destroyed automatically when its dtor called
+            // other.m_storage = nullptr;
             // other.m_numBuckets = 0;
             // other.m_numElements = 0;
         }
@@ -306,7 +307,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         return inlineItems;
     }
 
-    inline TItem* moveInline(TItem* from)
+    inline TItem* moveInline(TItem* otherInlineItems)
     {
         TItem* inlineItems = reinterpret_cast<TItem*>(&m_inlineStorage);
 
@@ -316,21 +317,18 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             for (unsigned i = 0; i < kNumInlineItems; i++)
             {
                 TItem* inlineItem = (inlineItems + i);
-                TItem& otherInlineItem = from[i];
-                const bool hasValidValue = otherInlineItem.isValid();
-                construct<TItem>((inlineItems + i), std::move(*otherInlineItem.key()));
+                TItem* otherInlineItem = (otherInlineItems + i);
+                const bool hasValidValue = otherInlineItem->isValid();
+                // move construct key
+                construct<TItem>((inlineItems + i), std::move(*otherInlineItem->key()));
 
                 // move inline storage value (if any)
                 if (hasValidValue)
                 {
                     TValue* value = inlineItem->value();
-                    TValue* otherValue = otherInlineItem.value();
+                    TValue* otherValue = otherInlineItem->value();
+                    // move construct value
                     construct<TValue>(value, std::move(*otherValue));
-
-                    if constexpr (!std::is_trivially_destructible<TValue>::value)
-                    {
-                        destruct(otherValue);
-                    }
                 }
             }
         }
@@ -339,7 +337,8 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             // move only keys
             for (unsigned i = 0; i < kNumInlineItems; i++)
             {
-                construct<TItem>((inlineItems + i), std::move(*from[i].key()));
+                // move construct key
+                construct<TItem>((inlineItems + i), std::move(*(otherInlineItems + i)->key()));
             }
         }
 
@@ -386,6 +385,16 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         TItem* const endItem = item + numBuckets;
         for (; item != endItem; item++)
         {
+            // destroy value if need
+            if constexpr (!std::is_trivially_destructible<TValue>::value)
+            {
+                if (item->isValid())
+                {
+                    destruct(item->value());
+                }
+            }
+
+            // note: this won't automatically call value dtors!
             destruct(item);
         }
     }
@@ -721,7 +730,15 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 {
                     emplaceToExisting(numBucketsNew, std::move(*item->key()));
                 }
+
+                // destroy old value if need
+                if constexpr ((!std::is_trivially_destructible<TValue>::value) && (has_values::value))
+                {
+                    destruct(item->value());
+                }
             }
+
+            // note: this won't automatically call value dtors!
             destruct(item);
         }
     }
@@ -989,9 +1006,11 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 };
 
 // hashmap declaration
-template <typename TKey, typename TValue> using HashMap = HashTable<TKey, TValue, 1, KeyInfo<TKey>>;
+template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename TKeyInfo = KeyInfo<TKey>>
+using HashMap = HashTable<TKey, TValue, kNumInlineItems, TKeyInfo>;
 
 // hashset declaration
-template <typename TKey> using HashSet = HashTable<TKey, std::nullptr_t, 1, KeyInfo<TKey>>;
+template <typename TKey, unsigned kNumInlineItems = 1, typename TKeyInfo = KeyInfo<TKey>>
+using HashSet = HashTable<TKey, std::nullptr_t, kNumInlineItems, TKeyInfo>;
 
 } // namespace Excalibur

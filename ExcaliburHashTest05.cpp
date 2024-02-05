@@ -63,6 +63,165 @@ TEST(SmFlatHashMap, InlineStorageTest01)
     }
 }
 
+static int ctorCallCount = 0;
+static int dtorCallCount = 0;
+static int assignCallCount = 0;
+
+struct ComplexVal
+{
+    ComplexVal() = delete;
+    ComplexVal(const ComplexVal& other) = delete;
+    ComplexVal& operator=(const ComplexVal& other) noexcept = delete;
+
+    ComplexVal(uint32_t _v) noexcept
+        : v(_v)
+        , status(Status::Constructed)
+    {
+        ctorCallCount++;
+    }
+
+    ComplexVal(ComplexVal&& other) noexcept
+        : v(other.v)
+        , status(Status::MoveConstructed)
+    {
+        EXPECT_NE(other.status, Status::Destructed);
+        ctorCallCount++;
+        other.status = Status::Moved;
+    }
+
+    ~ComplexVal() noexcept
+    {
+        EXPECT_NE(status, Status::Destructed);
+        status = Status::Destructed;
+        dtorCallCount++;
+    }
+
+    ComplexVal& operator=(ComplexVal&& other) noexcept
+    {
+        status = Status::MoveAssigned;
+        other.status = Status::Moved;
+
+        v = other.v;
+        assignCallCount++;
+        return *this;
+    }
+
+    uint32_t v;
+    enum class Status
+    {
+        Constructed = 0,
+        MoveConstructed = 1,
+        MoveAssigned = 2,
+        Destructed = 3,
+        Moved = 4,
+    };
+    Status status;
+};
+
+template <typename TFrom, typename TTo> void doMoveAssignmentTest(TFrom& hm1, TTo& hm2, size_t numValuesToInsert)
+{
+    // insert values
+    for (size_t i = 0; i < numValuesToInsert; i++)
+    {
+        hm1.emplace(int(i), uint32_t(i + 13));
+    }
+
+    {
+        EXPECT_TRUE(hm1.has(0));
+        EXPECT_TRUE(hm1.has(1));
+        EXPECT_TRUE(hm1.has(2));
+
+        auto it1 = hm1.find(0);
+        auto it2 = hm1.find(1);
+        auto it3 = hm1.find(2);
+
+        EXPECT_NE(it1, hm1.end());
+        EXPECT_NE(it2, hm1.end());
+        EXPECT_NE(it3, hm1.end());
+
+        const int& key1 = it1->first;
+        const ComplexVal& value1 = it1->second;
+
+        const int& key2 = it2->first;
+        const ComplexVal& value2 = it2->second;
+
+        const int& key3 = it3->first;
+        const ComplexVal& value3 = it3->second;
+
+        EXPECT_EQ(key1, 0);
+        EXPECT_EQ(key2, 1);
+        EXPECT_EQ(key3, 2);
+
+        EXPECT_EQ(value1.v, uint32_t(13));
+        EXPECT_EQ(value2.v, uint32_t(14));
+        EXPECT_EQ(value3.v, uint32_t(15));
+    }
+
+    // move assign to other hash map
+    hm2 = std::move(hm1);
+
+    {
+        EXPECT_TRUE(hm2.has(0));
+        EXPECT_TRUE(hm2.has(1));
+        EXPECT_TRUE(hm2.has(2));
+
+        auto it1 = hm2.find(0);
+        auto it2 = hm2.find(1);
+        auto it3 = hm2.find(2);
+
+        EXPECT_NE(it1, hm2.end());
+        EXPECT_NE(it2, hm2.end());
+        EXPECT_NE(it3, hm2.end());
+
+        const int& key1 = it1->first;
+        const ComplexVal& value1 = it1->second;
+
+        const int& key2 = it2->first;
+        const ComplexVal& value2 = it2->second;
+
+        const int& key3 = it3->first;
+        const ComplexVal& value3 = it3->second;
+
+        EXPECT_EQ(key1, 0);
+        EXPECT_EQ(key2, 1);
+        EXPECT_EQ(key3, 2);
+
+        EXPECT_EQ(value1.v, uint32_t(13));
+        EXPECT_EQ(value2.v, uint32_t(14));
+        EXPECT_EQ(value3.v, uint32_t(15));
+    }
+}
+
+TEST(SmFlatHashMap, InlineStorageTest02)
+{
+    {
+        // move inline -> inline
+        ctorCallCount = 0;
+        dtorCallCount = 0;
+        assignCallCount = 0;
+        {
+            Excalibur::HashMap<int, ComplexVal, 8> hm1;
+            Excalibur::HashMap<int, ComplexVal, 8> hm2;
+
+            doMoveAssignmentTest(hm1, hm2, 3);
+        }
+        EXPECT_EQ(ctorCallCount, dtorCallCount);
+    }
+
+    {
+        // move heap -> heap
+        ctorCallCount = 0;
+        dtorCallCount = 0;
+        assignCallCount = 0;
+        {
+            Excalibur::HashMap<int, ComplexVal, 1> hm1;
+            Excalibur::HashMap<int, ComplexVal, 1> hm2;
+
+            doMoveAssignmentTest(hm1, hm2, 100);
+        }
+        EXPECT_EQ(ctorCallCount, dtorCallCount);
+    }
+}
 
 TEST(SmFlatHashMap, AliasNameTest)
 {
@@ -101,10 +260,4 @@ TEST(SmFlatHashMap, AliasNameTest)
         EXPECT_TRUE(hs.has(2));
         EXPECT_FALSE(hs.has(3));
     }
-
-
-
-
-
-
 }
