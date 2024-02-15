@@ -789,6 +789,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
+        EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), TKeyInfo::getTombstone()));
         uint32_t numBuckets = m_numBuckets;
 
         // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
