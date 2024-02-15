@@ -684,7 +684,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         TItem* const firstItem = m_storage;
         TItem* const endItem = firstItem + numBuckets;
         TItem* EXLBR_RESTRICT currentItem = firstItem + bucketIndex;
-        TItem* insertItem = nullptr;
+        TItem* EXLBR_RESTRICT insertItem = nullptr;
 
         while (true)
         {
