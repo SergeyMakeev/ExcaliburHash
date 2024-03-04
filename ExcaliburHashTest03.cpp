@@ -16,7 +16,7 @@ template <> struct KeyInfo<CustomStruct>
     static inline bool isValid(const CustomStruct& key) noexcept { return key.v < 0x7ffffffe; }
     static inline CustomStruct getTombstone() noexcept { return CustomStruct{0x7fffffff}; }
     static inline CustomStruct getEmpty() noexcept { return CustomStruct{0x7ffffffe}; }
-    static inline uint64_t hash(const CustomStruct& /*key*/) noexcept
+    static inline size_t hash(const CustomStruct& /*key*/) noexcept
     {
         // Note: this is a very bad hash function causing 100% collisions
         // added intentionally for the test
@@ -91,22 +91,6 @@ TEST(SmFlatHashMap, EmplaceEdgeCase)
         EXPECT_EQ(it.first.value(), v);
     }
 }
-
-namespace Excalibur
-{
-template <> struct KeyInfo<std::string>
-{
-    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
-    static inline std::string getTombstone() noexcept
-    {
-        // and let's hope that small string optimization will do the job
-        return std::string(1, char(1));
-    }
-    static inline std::string getEmpty() noexcept { return std::string(); }
-    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
-    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
-};
-} // namespace Excalibur
 
 TEST(SmFlatHashMap, ComplexStruct)
 {
