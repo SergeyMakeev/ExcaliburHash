@@ -37,13 +37,13 @@ namespace wyhash
 
 inline uint64_t _hash64(uint64_t v)
 {
-    #if EXLBR_VISUAL_STUDIO
+    #if defined(EXLBR_VISUAL_STUDIO)
     {
         uint64_t h;
         uint64_t l = _umul128(v, UINT64_C(0x9E3779B97F4A7C15), &h);
         return l ^ h;
     }
-    #elif
+    #elif defined(EXLBR_CLANG) || defined(EXLBR_GCC)
     {
         __uint128_t r = v;
         r *= UINT64_C(0x9E3779B97F4A7C15);
@@ -51,7 +51,7 @@ inline uint64_t _hash64(uint64_t v)
     }
     #else
     {
-        #error Unsupported compiler or platform
+        #error Unsupported compiler
     }
     #endif
 }
@@ -65,19 +65,19 @@ inline uint32_t _hash32(uint32_t v)
         uint64_t lh = __emulu(v, UINT32_C(0x9e3779b1));
         return (uint32_t)(lh >> 32U) ^ (uint32_t)(lh);
     }
-    #elif
+    #elif defined(EXLBR_CLANG) || defined(EXLBR_GCC)
     {
         uint64_t lh = uint64_t(v) * uint64_t(0x9e3779b1);
         return (uint32_t)(lh >> 32U) ^ (uint32_t)(lh);
     }
     #else
     {
-        #error Unsupported compiler or platform
+        #error Unsupported compiler
     }
     #endif
 }
 #else
-    #error Unsupported compiler or platform
+    #error Unsupported platform. Only 64/32-bit platforms supported
 #endif
 
 inline size_t hash(uint64_t v)
@@ -88,7 +88,7 @@ inline size_t hash(uint64_t v)
     uint32_t vv = (uint32_t)(v >> 32U) ^ (uint32_t)(v);
     return _hash32(vv);
 #else
-    #error Unsupported compiler or platform
+    #error Unsupported platform. Only 64/32-bit platforms supported
 #endif
 }
 
@@ -99,7 +99,7 @@ inline size_t hash(uint32_t v)
 #elif EXLBR_32
     return _hash32(v);
 #else
-    #error Unsupported compiler or platform
+    #error Unsupported platform. Only 64/32-bit platforms supported
 #endif
 }
 
