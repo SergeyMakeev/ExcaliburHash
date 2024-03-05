@@ -249,7 +249,7 @@ template <> struct KeyInfo<Bar>
     static inline bool isValid(const Bar& key) noexcept { return key.v < 0x7ffffffe; }
     static inline Bar getTombstone() noexcept { return Bar{0x7fffffff}; }
     static inline Bar getEmpty() noexcept { return Bar{0x7ffffffe}; }
-    static inline uint64_t hash(const Bar& key) noexcept { return std::hash<int>{}(key.v); }
+    static inline size_t hash(const Bar& key) noexcept { return std::hash<int>{}(key.v); }
     static inline bool isEqual(const Bar& lhs, const Bar& rhs) noexcept { return lhs.v == rhs.v; }
 };
 } // namespace Excalibur

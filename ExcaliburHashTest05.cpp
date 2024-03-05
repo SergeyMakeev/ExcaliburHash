@@ -3,22 +3,6 @@
 #include <array>
 #include <cstring>
 
-namespace Excalibur
-{
-template <> struct KeyInfo<std::string>
-{
-    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
-    static inline std::string getTombstone() noexcept
-    {
-        // and let's hope that small string optimization will do the job
-        return std::string(1, char(1));
-    }
-    static inline std::string getEmpty() noexcept { return std::string(); }
-    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
-    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
-};
-} // namespace Excalibur
-
 TEST(SmFlatHashMap, InlineStorageTest01)
 {
     // create hash map and insert one element

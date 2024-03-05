@@ -52,53 +52,7 @@
     #endif
 #endif
 
-namespace Excalibur
-{
-
-// generic type (without implementation)
-template <typename T> struct KeyInfo
-{
-    //    static inline T getTombstone() noexcept;
-    //    static inline T getEmpty() noexcept;
-    //    static inline uint64_t hash(const T& key) noexcept;
-    //    static inline bool isEqual(const T& lhs, const T& rhs) noexcept;
-    //    static inline bool isValid(const T& key) noexcept;
-};
-
-template <> struct KeyInfo<int>
-{
-    static inline bool isValid(const int& key) noexcept { return key < 0x7ffffffe; }
-    static inline int getTombstone() noexcept { return 0x7fffffff; }
-    static inline int getEmpty() noexcept { return 0x7ffffffe; }
-    static inline uint64_t hash(const int& key) noexcept { return key; }
-    static inline bool isEqual(const int& lhs, const int& rhs) noexcept { return lhs == rhs; }
-};
-
-/*
-template <> struct KeyInfo<uint32_t>
-{
-    static inline bool isValid(const uint32_t& key) noexcept { return key < 0xfffffffe; }
-    static inline uint32_t getTombstone() noexcept { return 0xfffffffe; }
-    static inline uint32_t getEmpty() noexcept { return 0xffffffff; }
-    static inline uint64_t hash(const uint32_t& key) noexcept { return key; }
-    static inline bool isEqual(const uint32_t& lhs, const uint32_t& rhs) noexcept { return lhs == rhs; }
-};
-
- template <> struct KeyInfo<std::string>
-{
-    static inline bool isValid(const std::string& key) noexcept { return !key.empty() && key.data()[0] != char(1); }
-    static inline std::string getTombstone() noexcept
-    {
-        // and let's hope that small string optimization will do the job
-        return std::string(1, char(1));
-    }
-    static inline std::string getEmpty() noexcept { return std::string(); }
-    static inline uint64_t hash(const std::string& key) noexcept { return std::hash<std::string>{}(key); }
-    static inline bool isEqual(const std::string& lhs, const std::string& rhs) noexcept { return lhs == rhs; }
-};
-*/
-
-} // namespace Excalibur
+#include <ExcaliburKeyInfo.h>
 
 namespace Excalibur
 {
@@ -416,11 +370,11 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
     {
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getTombstone(), key));
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), key));
-        const uint32_t numBuckets = m_numBuckets;
+        const size_t numBuckets = m_numBuckets;
         TItem* const firstItem = m_storage;
         TItem* const endItem = firstItem + numBuckets;
-        const uint64_t hashValue = TKeyInfo::hash(key);
-        uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
+        const size_t hashValue = TKeyInfo::hash(key);
+        const size_t bucketIndex = hashValue & (numBuckets - 1);
         TItem* startItem = firstItem + bucketIndex;
         TItem* EXLBR_RESTRICT currentItem = startItem;
         do
@@ -674,13 +628,13 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
   private:
     template <typename TK, class... Args>
-    inline std::pair<IteratorKV, bool> emplaceToExisting(uint32_t numBuckets, TK&& key, Args&&... args)
+    inline std::pair<IteratorKV, bool> emplaceToExisting(size_t numBuckets, TK&& key, Args&&... args)
     {
         // numBuckets has to be power-of-two
         EXLBR_ASSERT(numBuckets > 0);
         EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
-        const uint64_t hashValue = TKeyInfo::hash(key);
-        const uint32_t bucketIndex = uint32_t(hashValue) & (numBuckets - 1);
+        const size_t hashValue = TKeyInfo::hash(key);
+        const size_t bucketIndex = hashValue & (numBuckets - 1);
         TItem* const firstItem = m_storage;
         TItem* const endItem = firstItem + numBuckets;
         TItem* EXLBR_RESTRICT currentItem = firstItem + bucketIndex;
@@ -715,7 +669,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         }
     }
 
-    inline void reinsert(uint32_t numBucketsNew, TItem* EXLBR_RESTRICT item, TItem* const enditem) noexcept
+    inline void reinsert(size_t numBucketsNew, TItem* EXLBR_RESTRICT item, TItem* const enditem) noexcept
     {
         // re-insert existing elements
         for (; item != enditem; item++)
@@ -769,9 +723,9 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         // i.e.
         // auto it = table.find("key");
         // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
-        std::pair<IteratorKV, bool> it = emplaceToExisting(numBucketsNew, key, args...);
+        std::pair<IteratorKV, bool> it = emplaceToExisting(size_t(numBucketsNew), key, args...);
 
-        reinsert(numBucketsNew, item, enditem);
+        reinsert(size_t(numBucketsNew), item, enditem);
 
         if (!isInlineStorage)
         {

@@ -46,7 +46,7 @@ template <> struct KeyInfo<ComplexStruct>
     static inline bool isValid(const ComplexStruct& key) noexcept { return key.v < 0xfffffffe; }
     static inline ComplexStruct getTombstone() noexcept { return ComplexStruct{0xfffffffe}; }
     static inline ComplexStruct getEmpty() noexcept { return ComplexStruct{0xffffffff}; }
-    static inline uint64_t hash(const ComplexStruct& key) noexcept { return std::hash<uint32_t>{}(key.v); }
+    static inline size_t hash(const ComplexStruct& key) noexcept { return std::hash<uint32_t>{}(key.v); }
     static inline bool isEqual(const ComplexStruct& lhs, const ComplexStruct& rhs) noexcept { return lhs.v == rhs.v; }
 };
 
@@ -134,7 +134,7 @@ template <> struct KeyInfo<BadHashStruct>
     static inline bool isValid(const BadHashStruct& key) noexcept { return key.v < 0x7ffffffe; }
     static inline BadHashStruct getTombstone() noexcept { return BadHashStruct{0x7fffffff}; }
     static inline BadHashStruct getEmpty() noexcept { return BadHashStruct{0x7ffffffe}; }
-    static inline uint64_t hash(const BadHashStruct& /*key*/) noexcept
+    static inline size_t hash(const BadHashStruct& /*key*/) noexcept
     {
         // Note: this is a very bad hash function causing 100% collisions
         // added intentionally for the test

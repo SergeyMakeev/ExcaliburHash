@@ -30,9 +30,10 @@ This comparison will show their speed and efficiency, helping you understand whi
 
 Unless otherwise stated, all tests were run using the following configuration
 ```
-OS: Windows 11 Pro (22621.2861)
+OS: Windows 11 Pro (22621.3155)
 CPU: Intel i9-12900K
 RAM: 128Gb 
+Compiled in the Release mode using VS2022 (19.39.33520)
 ```
 
 [Performance test repositoty](https://github.com/SergeyMakeev/SimpleHashTest)  
