@@ -60,14 +60,15 @@ inline uint64_t _hash64(uint64_t v)
 
 inline uint32_t _hash32(uint32_t v)
 {
+    // multiplier from https://arxiv.org/abs/2001.05304
     #if EXLBR_VISUAL_STUDIO
     {
-        uint64_t lh = __emulu(v, UINT32_C(0x9e3779b1));
+        uint64_t lh = __emulu(v, UINT32_C(0xE817FB2D));
         return (uint32_t)(lh >> 32U) ^ (uint32_t)(lh);
     }
     #elif defined(EXLBR_CLANG) || defined(EXLBR_GCC)
     {
-        uint64_t lh = uint64_t(v) * uint64_t(0x9e3779b1);
+        uint64_t lh = uint64_t(v) * uint64_t(0xE817FB2D);
         return (uint32_t)(lh >> 32U) ^ (uint32_t)(lh);
     }
     #else

@@ -13,6 +13,8 @@ TEST(SmFlatHashMap, SimplestTest)
     EXPECT_EQ(it1.first, it2);
     EXPECT_EQ(it2.key(), 1);
     EXPECT_EQ(it2.value(), 2);
+    auto it3 = ht.emplace(3, 4);
+    EXPECT_TRUE(it3.second);
 }
 
 TEST(SmFlatHashMap, EmptyValuesTest)
