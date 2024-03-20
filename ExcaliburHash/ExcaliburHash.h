@@ -74,9 +74,9 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
     static inline constexpr uint32_t k_MinNumberOfBuckets = 16;
 
-    template <typename T, class... Args> static void construct(void* EXLBR_RESTRICT ptr, Args&&... args)
+    template <typename T, class... Args> static T* construct(void* EXLBR_RESTRICT ptr, Args&&... args)
     {
-        new (ptr) T(std::forward<Args>(args)...);
+        return new (ptr) T(std::forward<Args>(args)...);
     }
     template <typename T> static void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
 
@@ -105,7 +105,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             [[nodiscard]] inline TValue* value() noexcept
             {
                 TValue* value = reinterpret_cast<TValue*>(&m_value);
-                return value;
+                return std::launder(value);
             }
         };
     };
@@ -278,7 +278,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 TItem* otherInlineItem = (otherInlineItems + i);
                 const bool hasValidValue = otherInlineItem->isValid();
                 // move construct key
-                construct<TItem>((inlineItems + i), std::move(*otherInlineItem->key()));
+                inlineItem = construct<TItem>(inlineItem, std::move(*otherInlineItem->key()));
 
                 // move inline storage value (if any)
                 if (hasValidValue)
