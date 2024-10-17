@@ -637,7 +637,8 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         const size_t bucketIndex = hashValue & (numBuckets - 1);
         TItem* const firstItem = m_storage;
         TItem* const endItem = firstItem + numBuckets;
-        TItem* EXLBR_RESTRICT currentItem = firstItem + bucketIndex;
+        TItem* const startItem = firstItem + bucketIndex;
+        TItem* EXLBR_RESTRICT currentItem = startItem;
         TItem* EXLBR_RESTRICT insertItem = nullptr;
 
         while (true)
@@ -646,7 +647,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             {
                 return std::make_pair(IteratorKV(this, currentItem), false);
             }
-            if (currentItem->isEmpty())
+            if (currentItem->isEmpty() || (insertItem && currentItem == startItem))
             {
                 insertItem = ((insertItem == nullptr) ? currentItem : insertItem);
 
