@@ -169,7 +169,7 @@ OS: Windows 11 Pro (22621.4317)
 CPU: Intel i9-12900K
 RAM: 128Gb 
 ```
-![Intel Summary](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/intel_summary.png)
+![Intel Summary](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/intel_summary_2025_08_03.png)
 
 
 ## Usage
