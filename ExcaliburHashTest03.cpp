@@ -292,7 +292,7 @@ TEST(SmFlatHashMap, CopyTest)
     EXPECT_EQ(ht1.size(), uint32_t(1));
     EXPECT_NE(ht1.find(1), ht1.iend());
 
-    Excalibur::HashTable<int, nullptr_t> ht4;
+    Excalibur::HashTable<int, std::nullptr_t> ht4;
     ht4.emplace(1);
     ht4.emplace(2);
     EXPECT_EQ(ht4.size(), uint32_t(2));
@@ -300,7 +300,7 @@ TEST(SmFlatHashMap, CopyTest)
     EXPECT_TRUE(ht4.has(2));
     EXPECT_FALSE(ht4.has(3));
 
-    Excalibur::HashTable<int, nullptr_t> ht5;
+    Excalibur::HashTable<int, std::nullptr_t> ht5;
     ht5 = ht4;
     EXPECT_EQ(ht5.size(), uint32_t(2));
     EXPECT_TRUE(ht5.has(1));
