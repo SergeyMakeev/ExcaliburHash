@@ -20,7 +20,7 @@ TEST(SmFlatHashMap, SimplestTest)
 TEST(SmFlatHashMap, EmptyValuesTest)
 {
     // use hash table as map (no values stored at all)
-    Excalibur::HashTable<int, nullptr_t> ht;
+    Excalibur::HashTable<int, std::nullptr_t> ht;
     EXPECT_TRUE(ht.empty());
 
     const int kNumElements = 99999;
@@ -259,7 +259,7 @@ template <> struct KeyInfo<Bar>
 
 TEST(SmFlatHashMap, IteratorTestEdgeCases)
 {
-    Excalibur::HashTable<Bar, nullptr_t> ht;
+    Excalibur::HashTable<Bar, std::nullptr_t> ht;
     EXPECT_TRUE(ht.empty());
     {
         auto it = ht.begin();
