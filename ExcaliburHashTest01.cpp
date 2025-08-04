@@ -19,7 +19,7 @@ TEST(SmFlatHashMap, SimplestTest)
 
 TEST(SmFlatHashMap, EmptyValuesTest)
 {
-    // use hash table as map (no values stored at all)
+    // Use hash table as map (no values stored at all)
     Excalibur::HashTable<int, std::nullptr_t> ht;
     EXPECT_TRUE(ht.empty());
 
