@@ -186,7 +186,7 @@ int main()
   hashMap.emplace(13, 6);
 
   // use hash table as a hash set (key only)
-  Excalibur::HashTable<int, nullptr_t> hashSet;
+  Excalibur::HashTable<int, std::nullptr_t> hashSet;
   hashSet.emplace(13);
 
   return 0;
