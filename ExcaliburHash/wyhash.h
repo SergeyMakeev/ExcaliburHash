@@ -104,10 +104,8 @@ inline size_t hash(uint32_t v)
 #endif
 }
 
-
 inline size_t hash(int64_t v) { return hash(uint64_t(v)); }
 inline size_t hash(int32_t v) { return hash(uint32_t(v)); }
-
 
 } // namespace wyhash
 
