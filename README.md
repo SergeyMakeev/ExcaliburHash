@@ -165,7 +165,7 @@ This test quickly shows which hash map implementations 'cheat' by creating many 
 Below, you can find all the tests combined into a single table using normalized timings where 1.0 is the fastest implementation, 2.0 is twice as slow as the fastest configuration, and so on.
 
 ```
-OS: Windows 11 Pro (22621.2861)
+OS: Windows 11 Pro (22621.4317)
 CPU: Intel i9-12900K
 RAM: 128Gb 
 ```
