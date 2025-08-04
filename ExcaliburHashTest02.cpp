@@ -144,7 +144,7 @@ template <> struct KeyInfo<BadHashStruct>
 TEST(SmFlatHashMap, InsertEraseReinsert)
 {
     const int kNumElements = 1024;
-    Excalibur::HashTable<BadHashStruct, nullptr_t> ht;
+    Excalibur::HashTable<BadHashStruct, std::nullptr_t> ht;
     EXPECT_EQ(ht.size(), 0u);
     EXPECT_GE(ht.capacity(), 0u);
 
