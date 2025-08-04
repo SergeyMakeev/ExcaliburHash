@@ -12,7 +12,7 @@
         #define EXLBR_ALLOC(sizeInBytes, alignment) _mm_malloc(sizeInBytes, alignment)
         #define EXLBR_FREE(ptr) _mm_free(ptr)
     #else
-        // Posix
+    // Posix
         #include <stdlib.h>
         #define EXLBR_ALLOC(sizeInBytes, alignment) aligned_alloc(alignment, sizeInBytes)
         #define EXLBR_FREE(ptr) free(ptr)
@@ -74,9 +74,9 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
     static inline constexpr uint32_t k_MinNumberOfBuckets = 16;
 
-    template <typename T, class... Args> static void construct(void* EXLBR_RESTRICT ptr, Args&&... args)
+    template <typename T, class... Args> static T* construct(void* EXLBR_RESTRICT ptr, Args&&... args)
     {
-        new (ptr) T(std::forward<Args>(args)...);
+        return new (ptr) T(std::forward<Args>(args)...);
     }
     template <typename T> static void destruct(T* EXLBR_RESTRICT ptr) { ptr->~T(); }
 
@@ -96,6 +96,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 : m_key(std::move(other))
             {
             }
+
             [[nodiscard]] inline bool isValid() const noexcept { return TKeyInfo::isValid(m_key); }
             [[nodiscard]] inline bool isEmpty() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), m_key); }
             [[nodiscard]] inline bool isTombstone() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), m_key); }
@@ -105,7 +106,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             [[nodiscard]] inline TValue* value() noexcept
             {
                 TValue* value = reinterpret_cast<TValue*>(&m_value);
-                return value;
+                return std::launder(value);
             }
         };
     };
@@ -198,10 +199,12 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             m_storage = other.m_storage;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
+            m_numTombstones = other.m_numTombstones;
             other.m_storage = nullptr;
             // don't need to zero rest of the members because dtor doesn't use them
             // other.m_numBuckets = 0;
             // other.m_numElements = 0;
+            // other.m_numTombstones = 0;
         }
         else
         {
@@ -212,10 +215,12 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             m_storage = inlineItems;
             m_numBuckets = other.m_numBuckets;
             m_numElements = other.m_numElements;
+            m_numTombstones = other.m_numTombstones;
             // note: other's online items will be destroyed automatically when its dtor called
             // other.m_storage = nullptr;
             // other.m_numBuckets = 0;
             // other.m_numElements = 0;
+            // other.m_numTombstones = 0;
         }
     }
 
@@ -274,7 +279,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 TItem* otherInlineItem = (otherInlineItems + i);
                 const bool hasValidValue = otherInlineItem->isValid();
                 // move construct key
-                construct<TItem>((inlineItems + i), std::move(*otherInlineItem->key()));
+                inlineItem = construct<TItem>(inlineItem, std::move(*otherInlineItem->key()));
 
                 // move inline storage value (if any)
                 if (hasValidValue)
@@ -321,6 +326,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
         m_numBuckets = numBuckets;
         m_numElements = 0;
+        m_numTombstones = 0;
 
         TItem* EXLBR_RESTRICT item = m_storage;
         TItem* const endItem = item + numBuckets;
@@ -586,6 +592,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         //: m_storage(nullptr)
         : m_numBuckets(kNumInlineItems)
         , m_numElements(0)
+        , m_numTombstones(0)
     {
         m_storage = constructInline(TKeyInfo::getEmpty());
     }
@@ -624,31 +631,38 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         }
         // TODO: shrink if needed?
         m_numElements = 0;
+        m_numTombstones = 0;
     }
 
   private:
-    template <typename TK, class... Args>
-    inline std::pair<IteratorKV, bool> emplaceToExisting(size_t numBuckets, TK&& key, Args&&... args)
+    template <typename TK, class... Args> inline std::pair<IteratorKV, bool> emplaceToExisting(size_t numBuckets, TK&& key, Args&&... args)
     {
-        // numBuckets has to be power-of-two
         EXLBR_ASSERT(numBuckets > 0);
-        EXLBR_ASSERT((numBuckets & (numBuckets - 1)) == 0);
+        EXLBR_ASSERT(isPow2(numBuckets));
         const size_t hashValue = TKeyInfo::hash(key);
         const size_t bucketIndex = hashValue & (numBuckets - 1);
         TItem* const firstItem = m_storage;
         TItem* const endItem = firstItem + numBuckets;
         TItem* EXLBR_RESTRICT currentItem = firstItem + bucketIndex;
-        TItem* EXLBR_RESTRICT insertItem = nullptr;
+        TItem* EXLBR_RESTRICT foundTombstoneItem = nullptr;
 
         while (true)
         {
+            // key is already exist
             if (currentItem->isEqual(key))
             {
                 return std::make_pair(IteratorKV(this, currentItem), false);
             }
+
+            // if we found an empty bucket, the key doesn't exist in the set.
             if (currentItem->isEmpty())
             {
-                insertItem = ((insertItem == nullptr) ? currentItem : insertItem);
+                TItem* EXLBR_RESTRICT insertItem = ((foundTombstoneItem == nullptr) ? currentItem : foundTombstoneItem);
+
+                if (foundTombstoneItem)
+                {
+                    m_numTombstones--;
+                }
 
                 // move key
                 *insertItem->key() = std::move(key);
@@ -660,10 +674,13 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 m_numElements++;
                 return std::make_pair(IteratorKV(this, insertItem), true);
             }
-            if (currentItem->isTombstone() && insertItem == nullptr)
+
+            // if we found a tombstone, remember it.  If key is not exist in the table, we prefer to return tombmstone to minimize probing.
+            if (currentItem->isTombstone() && foundTombstoneItem == nullptr)
             {
-                insertItem = currentItem;
+                foundTombstoneItem = currentItem;
             }
+
             currentItem++;
             currentItem = (currentItem == endItem) ? firstItem : currentItem;
         }
@@ -723,7 +740,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         // i.e.
         // auto it = table.find("key");
         // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
-        std::pair<IteratorKV, bool> it = emplaceToExisting(size_t(numBucketsNew), key, args...);
+        std::pair<IteratorKV, bool> it = emplaceToExisting(size_t(numBucketsNew), std::forward<TK>(key), std::forward<Args>(args)...);
 
         reinsert(size_t(numBucketsNew), item, enditem);
 
@@ -746,13 +763,13 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), TKeyInfo::getTombstone()));
         uint32_t numBuckets = m_numBuckets;
 
-        // numBucketsThreshold = (numBuckets * 3/4) (but implemented using bit shifts)
-        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u);
-        if (EXLBR_LIKELY(m_numElements <= numBucketsThreshold))
+        // numBucketsThreshold = (numBuckets * 1/2) (but implemented using bit shifts)
+        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + 1;
+        if (EXLBR_LIKELY(m_numElements < numBucketsThreshold))
         {
-            return emplaceToExisting(numBuckets, key, args...);
+            return emplaceToExisting(numBuckets, std::forward<TK>(key), std::forward<Args>(args)...);
         }
-        return emplaceReallocate(numBuckets * 2, key, args...);
+        return emplaceReallocate(std::max(numBuckets * 2, 64u), std::forward<TK>(key), std::forward<Args>(args)...);
     }
 
     [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept
@@ -785,19 +802,17 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
             destruct(itemValue);
         }
 
-        // hash table now is empty. convert all tombstones to empty keys
+        TKey* itemKey = const_cast<TKey*>(it.getKey());
         if (m_numElements == 0)
         {
-            for (; item != endItem; item++)
-            {
-                *item->key() = TKeyInfo::getEmpty();
-            }
+            // hash table is now empty. it is safe to write empty value insted of tombstone
+            *itemKey = TKeyInfo::getEmpty();
             return endItem;
         }
 
         // overwrite key with empty key
-        TKey* itemKey = const_cast<TKey*>(it.getKey());
         *itemKey = TKeyInfo::getTombstone();
+        m_numTombstones++;
         return IteratorBase::getNextValidItem(it.m_item, endItem);
     }
 
@@ -820,14 +835,10 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         return (it != iend());
     }
 
-    inline bool reserve(uint32_t numBucketsNew)
+  private:
+    void resize(uint32_t numBucketsNew)
     {
-        if (numBucketsNew == 0 || numBucketsNew < capacity())
-        {
-            return false;
-        }
-        numBucketsNew = nextPow2(numBucketsNew);
-
+        EXLBR_ASSERT(isPow2(numBucketsNew));
         const uint32_t numBuckets = m_numBuckets;
         TItem* storage = m_storage;
         TItem* EXLBR_RESTRICT item = storage;
@@ -842,10 +853,23 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         {
             EXLBR_FREE(storage);
         }
+    }
 
+  public:
+    inline void rehash() { resize(m_numBuckets); }
+
+    inline bool reserve(uint32_t numBucketsNew)
+    {
+        if (numBucketsNew == 0 || numBucketsNew < capacity())
+        {
+            return false;
+        }
+        numBucketsNew = nextPow2(numBucketsNew);
+        resize(numBucketsNew);
         return true;
     }
 
+    [[nodiscard]] inline uint32_t getNumTombstones() const noexcept { return m_numTombstones; }
     [[nodiscard]] inline uint32_t size() const noexcept { return m_numElements; }
     [[nodiscard]] inline uint32_t capacity() const noexcept { return m_numBuckets; }
     [[nodiscard]] inline bool empty() const noexcept { return (m_numElements == 0); }
@@ -945,6 +969,9 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
     TItem* m_storage;       // 8
     uint32_t m_numBuckets;  // 4
     uint32_t m_numElements; // 4
+    uint32_t m_numTombstones; // 4
+    //padding 4
+
 
     template <typename INTEGRAL_TYPE> inline static constexpr bool isPow2(INTEGRAL_TYPE x) noexcept
     {
