@@ -763,9 +763,20 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         EXLBR_ASSERT(!TKeyInfo::isEqual(TKeyInfo::getEmpty(), TKeyInfo::getTombstone()));
         uint32_t numBuckets = m_numBuckets;
 
-        // numBucketsThreshold = (numBuckets * 1/2) (but implemented using bit shifts)
-        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + 1;
-        if (EXLBR_LIKELY(m_numElements < numBucketsThreshold))
+        // Growth threshold calculation: 75% load factor
+        // shr(numBuckets, 1u) = numBuckets/2 (50%)
+        // shr(numBuckets, 2u) = numBuckets/4 (25%)  
+        // Total: 50% + 25% + 1 = 75% + 1
+        //
+        // We count both live elements AND tombstones because:
+        // 1. Tombstones occupy slots and increase probe distances during lookup
+        // 2. A table full of tombstones can cause infinite loops in linear probing
+        // 3. Tombstones degrade performance almost as much as live elements
+        //
+        // Growing at 75% occupancy (elements + tombstones) maintains good performance
+        // while preventing pathological cases where tombstones dominate the table.
+        const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + shr(numBuckets, 2u) + 1;
+        if (EXLBR_LIKELY(m_numElements + m_numTombstones < numBucketsThreshold))
         {
             return emplaceToExisting(numBuckets, std::forward<TK>(key), std::forward<Args>(args)...);
         }
