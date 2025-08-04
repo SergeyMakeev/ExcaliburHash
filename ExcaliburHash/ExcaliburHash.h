@@ -765,7 +765,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
         // Growth threshold calculation: 75% load factor
         // shr(numBuckets, 1u) = numBuckets/2 (50%)
-        // shr(numBuckets, 2u) = numBuckets/4 (25%)  
+        // shr(numBuckets, 2u) = numBuckets/4 (25%)
         // Total: 50% + 25% + 1 = 75% + 1
         //
         // We count both live elements AND tombstones because:
