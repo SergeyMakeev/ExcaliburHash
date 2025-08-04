@@ -5,7 +5,7 @@
 
 TEST(SmFlatHashMap, Rehash)
 {
-	Excalibur::HashTable<int, int> ht;
+    Excalibur::HashTable<int, int> ht;
     ht.emplace(1, -1);
     ht.erase(1);
 
@@ -44,26 +44,28 @@ TEST(SmFlatHashMap, Rehash)
     EXPECT_EQ(ht.getNumTombstones(), uint32_t(0));
 }
 
-
-
 TEST(SmFlatHashMap, TestTmp)
 {
     class StringInternStringData
     {
-    public:
+      public:
         inline StringInternStringData()
-            : refCount(0), string()
-        {	}
-    
-        inline StringInternStringData(const std::string &string)
-            : refCount(1), string(string)
-        {	}
-    
+            : refCount(0)
+            , string()
+        {
+        }
+
+        inline StringInternStringData(const std::string& string)
+            : refCount(1)
+            , string(string)
+        {
+        }
+
         int64_t refCount;
         std::string string;
-    };    
+    };
 
-    Excalibur::HashTable<std::string, std::unique_ptr<StringInternStringData>>  exMap;
+    Excalibur::HashTable<std::string, std::unique_ptr<StringInternStringData>> exMap;
     auto inserted = exMap.emplace(std::string("test"), std::make_unique<StringInternStringData>("test"));
     EXPECT_EQ(inserted.second, true);
     EXPECT_NE(inserted.first, exMap.end());

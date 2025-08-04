@@ -119,13 +119,10 @@ TEST(SmFlatHashMap, CtorDtorCallCount)
     EXPECT_EQ(ctorCallCount, dtorCallCount);
 }
 
-
-
 struct BadHashStruct
 {
     int v = 0;
 };
-
 
 namespace Excalibur
 {
@@ -143,7 +140,6 @@ template <> struct KeyInfo<BadHashStruct>
     static inline bool isEqual(const BadHashStruct& lhs, const BadHashStruct& rhs) noexcept { return lhs.v == rhs.v; }
 };
 } // namespace Excalibur
-
 
 TEST(SmFlatHashMap, InsertEraseReinsert)
 {

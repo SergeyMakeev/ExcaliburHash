@@ -966,12 +966,11 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
 
   private:
     // prefix m_ to be able to easily see member access from the code (it could be more expensive in the inner loop)
-    TItem* m_storage;       // 8
-    uint32_t m_numBuckets;  // 4
-    uint32_t m_numElements; // 4
+    TItem* m_storage;         // 8
+    uint32_t m_numBuckets;    // 4
+    uint32_t m_numElements;   // 4
     uint32_t m_numTombstones; // 4
-    //padding 4
-
+    // padding 4
 
     template <typename INTEGRAL_TYPE> inline static constexpr bool isPow2(INTEGRAL_TYPE x) noexcept
     {

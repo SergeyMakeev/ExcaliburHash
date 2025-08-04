@@ -116,7 +116,6 @@ TEST(SmFlatHashMap, CopyableIterators)
         std::sort(before.begin(), before.end());
     }
 
-
     // iterate and remove
     {
         for (Excalibur::HashTable<std::string, std::string>::IteratorKV it3 = ht.ibegin(); it3 != ht.iend(); ++it3)
@@ -159,5 +158,5 @@ TEST(SmFlatHashMap, CopyableIterators)
         int iv = std::stoi(v);
         sumAfter += iv;
     }
-    EXPECT_EQ(sumBefore-5-9, sumAfter);
+    EXPECT_EQ(sumBefore - 5 - 9, sumAfter);
 }

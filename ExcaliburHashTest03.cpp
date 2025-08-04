@@ -1,7 +1,6 @@
 #include "ExcaliburHash.h"
 #include "gtest/gtest.h"
 
-
 #define EXLBR_UNUSED(x) (void)(x)
 
 struct CustomStruct
@@ -293,7 +292,6 @@ TEST(SmFlatHashMap, CopyTest)
     EXPECT_EQ(ht1.size(), uint32_t(1));
     EXPECT_NE(ht1.find(1), ht1.iend());
 
-
     Excalibur::HashTable<int, nullptr_t> ht4;
     ht4.emplace(1);
     ht4.emplace(2);
@@ -325,10 +323,11 @@ TEST(SmFlatHashMap, CopyEdgeCases)
 
     /*
     from Clang 7.0.0 release notes
-   
+
     -Wself-assign and -Wself-assign-field were extended to diagnose self-assignment operations using overloaded operators (i.e. classes).
-    If you are doing such an assignment intentionally, e.g. in a unit test for a data structure, the first warning can be disabled by passing
-    -Wno-self-assign-overloaded, also the warning can be suppressed by adding *& to the right-hand side or casting it to the appropriate reference type.
+    If you are doing such an assignment intentionally, e.g. in a unit test for a data structure, the first warning can be disabled by
+    passing -Wno-self-assign-overloaded, also the warning can be suppressed by adding *& to the right-hand side or casting it to the
+    appropriate reference type.
     */
     ht1 = *&ht1;
     EXPECT_EQ(ht1.size(), uint32_t(3));
