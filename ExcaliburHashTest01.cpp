@@ -188,6 +188,7 @@ TEST(SmFlatHashMap, IteratorTest)
         step++;
     }
     EXPECT_EQ(keysSum, keysSumTest);
+    EXPECT_EQ(step, kNumElements);
 
     // keys() iterator
     int64_t keysSumTest2 = 0;

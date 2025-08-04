@@ -65,4 +65,6 @@ TEST(SmFlatHashMap, TestTmp)
 
     Excalibur::HashTable<std::string, std::unique_ptr<StringInternStringData>>  exMap;
     auto inserted = exMap.emplace(std::string("test"), std::make_unique<StringInternStringData>("test"));
+    EXPECT_EQ(inserted.second, true);
+    EXPECT_NE(inserted.first, exMap.end());
 }
