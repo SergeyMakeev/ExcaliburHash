@@ -96,6 +96,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
                 : m_key(std::move(other))
             {
             }
+
             [[nodiscard]] inline bool isValid() const noexcept { return TKeyInfo::isValid(m_key); }
             [[nodiscard]] inline bool isEmpty() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getEmpty(), m_key); }
             [[nodiscard]] inline bool isTombstone() const noexcept { return TKeyInfo::isEqual(TKeyInfo::getTombstone(), m_key); }
@@ -739,7 +740,7 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         // i.e.
         // auto it = table.find("key");
         // table.emplace("another_key", it->second);   // <--- when hash table grows it->second will point to a memory we are about to free
-        std::pair<IteratorKV, bool> it = emplaceToExisting(size_t(numBucketsNew), key, args...);
+        std::pair<IteratorKV, bool> it = emplaceToExisting(size_t(numBucketsNew), std::forward<TK>(key), std::forward<Args>(args)...);
 
         reinsert(size_t(numBucketsNew), item, enditem);
 
@@ -766,9 +767,9 @@ template <typename TKey, typename TValue, unsigned kNumInlineItems = 1, typename
         const uint32_t numBucketsThreshold = shr(numBuckets, 1u) + 1;
         if (EXLBR_LIKELY(m_numElements < numBucketsThreshold))
         {
-            return emplaceToExisting(numBuckets, key, args...);
+            return emplaceToExisting(numBuckets, std::forward<TK>(key), std::forward<Args>(args)...);
         }
-        return emplaceReallocate(std::max(numBuckets * 2, 64u), key, args...);
+        return emplaceReallocate(std::max(numBuckets * 2, 64u), std::forward<TK>(key), std::forward<Args>(args)...);
     }
 
     [[nodiscard]] inline ConstIteratorKV find(const TKey& key) const noexcept

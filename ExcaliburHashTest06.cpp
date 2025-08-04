@@ -44,3 +44,25 @@ TEST(SmFlatHashMap, Rehash)
     EXPECT_EQ(ht.getNumTombstones(), uint32_t(0));
 }
 
+
+
+TEST(SmFlatHashMap, TestTmp)
+{
+    class StringInternStringData
+    {
+    public:
+        inline StringInternStringData()
+            : refCount(0), string()
+        {	}
+    
+        inline StringInternStringData(const std::string &string)
+            : refCount(1), string(string)
+        {	}
+    
+        int64_t refCount;
+        std::string string;
+    };    
+
+    Excalibur::HashTable<std::string, std::unique_ptr<StringInternStringData>>  exMap;
+    auto inserted = exMap.emplace(std::string("test"), std::make_unique<StringInternStringData>("test"));
+}
