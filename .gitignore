@@ -6,3 +6,4 @@ build
 codecov_report
 *.log
 
+*.tmp

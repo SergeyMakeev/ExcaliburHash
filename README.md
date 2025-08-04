@@ -148,6 +148,18 @@ This test quickly shows which hash map implementations 'cheat' by creating many 
 
 ![Performance comparison](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/ClearAndInsertRnd.png)
 
+
+### ClearAndInsertPrime
+
+1. Create a hash table.
+2. Insert 100 unique random numbers 32,767 times (shuffled), totaling 3,276,700 insertions.
+3. Destroy the hash table.
+4. Repeat steps 1-3 (10 times)
+
+![Performance comparison](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/ClearAndInsertPrime.png)
+
+
+
 ### Summary
 
 Below, you can find all the tests combined into a single table using normalized timings where 1.0 is the fastest implementation, 2.0 is twice as slow as the fastest configuration, and so on.
@@ -158,14 +170,6 @@ CPU: Intel i9-12900K
 RAM: 128Gb 
 ```
 ![Intel Summary](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/intel_summary.png)
-
-
-```
-OS: Windows 11 Home (22631.2861)
-CPU: AMD Ryzen5 2600
-RAM: 16Gb 
-```
-![AMD Summary](https://raw.githubusercontent.com/SergeyMakeev/ExcaliburHash/master/Images/amd_summary.png)
 
 
 ## Usage
