@@ -2,6 +2,7 @@
 
 [![License](https://img.shields.io/github/license/SergeyMakeev/ExcaliburHash)](LICENSE)
 [![ci](https://github.com/SergeyMakeev/ExcaliburHash/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/SergeyMakeev/ExcaliburHash/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/SergeyMakeev/ExcaliburHash/graph/badge.svg?token=6ZAF44KHRL)](https://codecov.io/gh/SergeyMakeev/ExcaliburHash)
 
 ## About
 
